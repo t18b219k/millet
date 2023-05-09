@@ -1,6 +1,7 @@
 # Millet
 
-A [language server][lang-srv] for [Standard ML][sml] (SML).
+A [language server][lang-srv] for [Standard ML][sml] (SML). 
+I plan to Extend to SML#.
 
 ![Millet logo](./editors/vscode/icon.png)
 
