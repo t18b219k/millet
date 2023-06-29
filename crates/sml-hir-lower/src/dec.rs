@@ -66,7 +66,7 @@ fn get_top_dec_one(st: &mut St<'_>, top_dec: ast::DecOne) -> sml_hir::StrDecIdx 
         pat: st.pat(sml_hir::Pat::Wild, ptr.clone()),
         exp: exp::get(st, top_dec.exp()),
       };
-      let dec = sml_hir::Dec::Val(Vec::new(), vec![bind]);
+      let dec = sml_hir::Dec::Val(Vec::new(), vec![bind], sml_hir::ValFlavor::TopLevelExp);
       let dec = st.dec(dec, ptr.clone());
       st.str_dec(sml_hir::StrDec::Dec(vec![dec]), ptr)
     }
@@ -86,7 +86,7 @@ fn get_str_dec_one(st: &mut St<'_>, str_dec: ast::DecOne) -> sml_hir::StrDecIdx 
   let res = match str_dec {
     ast::DecOne::StructureDec(str_dec) => {
       if !st.lang().dec.structure {
-        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("structure")));
+        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("`structure`")));
       }
       st.inc_level();
       let iter = str_dec.str_binds().filter_map(|str_bind| {
@@ -105,7 +105,7 @@ fn get_str_dec_one(st: &mut St<'_>, str_dec: ast::DecOne) -> sml_hir::StrDecIdx 
     }
     ast::DecOne::SignatureDec(str_dec) => {
       if !st.lang().dec.signature {
-        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("signature")));
+        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("`signature`")));
       }
       let iter = str_dec.sig_binds().filter_map(|sig_bind| {
         Some(sml_hir::SigBind {
@@ -117,7 +117,7 @@ fn get_str_dec_one(st: &mut St<'_>, str_dec: ast::DecOne) -> sml_hir::StrDecIdx 
     }
     ast::DecOne::FunctorDec(str_dec) => {
       if !st.lang().dec.functor {
-        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("functor")));
+        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("`functor`")));
       }
       st.inc_level();
       let iter = str_dec.functor_binds().filter_map(|fun_bind| {
@@ -152,7 +152,7 @@ fn get_str_dec_one(st: &mut St<'_>, str_dec: ast::DecOne) -> sml_hir::StrDecIdx 
     }
     ast::DecOne::LocalDec(str_dec) => {
       if !st.lang().dec.local {
-        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("local")));
+        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("`local`")));
       }
       st.inc_level();
       let fst = get_str_dec(st, str_dec.local_dec_hd().into_iter().flat_map(|x| x.decs()));
@@ -270,7 +270,7 @@ fn get_spec_one(st: &mut St<'_>, dec: Option<ast::DecOne>) -> Vec<sml_hir::SpecI
     }
     ast::DecOne::ValDec(dec) => {
       if !st.lang().dec.val {
-        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("val")));
+        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("`val`")));
       }
       if let Some(tvs) = dec.ty_var_seq() {
         st.err(tvs.syntax().text_range(), ErrorKind::NonSpecDecSyntax);
@@ -317,7 +317,7 @@ fn get_spec_one(st: &mut St<'_>, dec: Option<ast::DecOne>) -> Vec<sml_hir::SpecI
     }
     ast::DecOne::TyDec(dec) => {
       if !st.lang().dec.type_ {
-        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("type")));
+        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("`type`")));
       }
       let f = match dec.ty_head() {
         None => return vec![],
@@ -349,7 +349,7 @@ fn get_spec_one(st: &mut St<'_>, dec: Option<ast::DecOne>) -> Vec<sml_hir::SpecI
     }
     ast::DecOne::DatDec(dec) => {
       if !st.lang().dec.datatype {
-        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("datatype")));
+        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("`datatype`")));
       }
       if let Some(with_type) = dec.with_type() {
         st.err(
@@ -362,7 +362,7 @@ fn get_spec_one(st: &mut St<'_>, dec: Option<ast::DecOne>) -> Vec<sml_hir::SpecI
     }
     ast::DecOne::DatCopyDec(dec) => {
       if !st.lang().dec.datatype_copy {
-        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("datatype copy")));
+        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("`datatype` copy")));
       }
       get_name(dec.name())
         .zip(dec.path().and_then(get_path))
@@ -371,7 +371,7 @@ fn get_spec_one(st: &mut St<'_>, dec: Option<ast::DecOne>) -> Vec<sml_hir::SpecI
     }
     ast::DecOne::ExDec(dec) => {
       if !st.lang().dec.exception {
-        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("exception")));
+        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("`exception`")));
       }
       let iter = dec.ex_binds().filter_map(|ex_bind| {
         let name = str_util::Name::new(ex_bind.name_star_eq()?.token.text());
@@ -388,7 +388,7 @@ fn get_spec_one(st: &mut St<'_>, dec: Option<ast::DecOne>) -> Vec<sml_hir::SpecI
     }
     ast::DecOne::StructureDec(dec) => {
       if !st.lang().dec.structure {
-        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("structure")));
+        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("`structure`")));
       }
       let iter = dec.str_binds().filter_map(|str_bind| {
         if let Some(x) = str_bind.eq_str_exp() {
@@ -419,7 +419,7 @@ fn get_spec_one(st: &mut St<'_>, dec: Option<ast::DecOne>) -> Vec<sml_hir::SpecI
     }
     ast::DecOne::IncludeDec(dec) => {
       if !st.lang().dec.include {
-        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("include")));
+        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("`include`")));
       }
       let iter = dec.sig_exps().map(|x| {
         let spec = sml_hir::Spec::Include(get_sig_exp(st, Some(x)));
@@ -494,7 +494,7 @@ fn get_one(st: &mut St<'_>, dec: ast::DecOne) -> Option<sml_hir::DecIdx> {
     }
     ast::DecOne::ValDec(dec) => {
       if !st.lang().dec.val {
-        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("val")));
+        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("`val`")));
       }
       let ty_vars = ty::var_seq(st, dec.ty_var_seq());
       let iter = dec.val_binds().map(|val_bind| {
@@ -508,11 +508,11 @@ fn get_one(st: &mut St<'_>, dec: ast::DecOne) -> Option<sml_hir::DecIdx> {
           exp: exp::get(st, exp),
         }
       });
-      sml_hir::Dec::Val(ty_vars, iter.collect())
+      sml_hir::Dec::Val(ty_vars, iter.collect(), sml_hir::ValFlavor::Val)
     }
     ast::DecOne::FunDec(dec) => {
       if !st.lang().dec.fun {
-        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("fun")));
+        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("`fun`")));
       }
       let ty_vars = ty::var_seq(st, dec.ty_var_seq());
       let iter = dec.fun_binds().map(|fun_bind| {
@@ -557,10 +557,8 @@ fn get_one(st: &mut St<'_>, dec: ast::DecOne) -> Option<sml_hir::DecIdx> {
             None => num_pats = Some(pats.len()),
             Some(num_pats) => {
               if num_pats != pats.len() {
-                st.err(
-                  case.syntax().text_range(),
-                  ErrorKind::FunBindWrongNumPats(num_pats, pats.len()),
-                );
+                let tr = pats_text_range(&case).unwrap_or_else(|| case.syntax().text_range());
+                st.err(tr, ErrorKind::FunBindWrongNumPats(num_pats, pats.len()));
               }
             }
           }
@@ -584,7 +582,7 @@ fn get_one(st: &mut St<'_>, dec: ast::DecOne) -> Option<sml_hir::DecIdx> {
             let ptr = SyntaxNodePtr::new(body.syntax());
             let mut body = exp::get(st, Some(body));
             if let Some(ty) = ty {
-              body = st.exp(sml_hir::Exp::Typed(body, ty), ptr);
+              body = st.exp(sml_hir::Exp::Typed(body, ty, sml_hir::TypedFlavor::Fun), ptr);
             }
             body
           });
@@ -609,11 +607,12 @@ fn get_one(st: &mut St<'_>, dec: ast::DecOne) -> Option<sml_hir::DecIdx> {
             let tup = exp::tuple(arg_exprs);
             st.exp(tup, ptr.clone())
           };
-          let case = exp::case(st, head, arms, ptr.clone(), sml_hir::FnFlavor::Fun);
+          let flavor = sml_hir::FnFlavor::FunCase { tuple: num_pats.is_some_and(|x| x != 1) };
+          let case = exp::case(st, head, arms, ptr.clone(), flavor);
           arg_names.into_iter().rev().fold(st.exp(case, ptr.clone()), |body, name| {
             let pat = st.pat(pat::name(name.as_str()), ptr.clone());
             let arm = sml_hir::Arm { pat, exp: body };
-            st.exp(sml_hir::Exp::Fn(vec![arm], sml_hir::FnFlavor::Fun), ptr.clone())
+            st.exp(sml_hir::Exp::Fn(vec![arm], sml_hir::FnFlavor::FunArg), ptr.clone())
           })
         };
         sml_hir::ValBind {
@@ -622,11 +621,11 @@ fn get_one(st: &mut St<'_>, dec: ast::DecOne) -> Option<sml_hir::DecIdx> {
           exp,
         }
       });
-      sml_hir::Dec::Val(ty_vars, iter.collect())
+      sml_hir::Dec::Val(ty_vars, iter.collect(), sml_hir::ValFlavor::Fun)
     }
     ast::DecOne::TyDec(dec) => {
       if !st.lang().dec.type_ {
-        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("type")));
+        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("`type`")));
       }
       let hd = dec.ty_head()?;
       match hd.kind {
@@ -637,7 +636,7 @@ fn get_one(st: &mut St<'_>, dec: ast::DecOne) -> Option<sml_hir::DecIdx> {
     }
     ast::DecOne::DatDec(dec) => {
       if !st.lang().dec.datatype {
-        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("datatype")));
+        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("`datatype`")));
       }
       let d_binds = dat_binds(st, dec.dat_binds());
       let t_binds = ty_binds(st, dec.with_type().into_iter().flat_map(|x| x.ty_binds()));
@@ -645,7 +644,7 @@ fn get_one(st: &mut St<'_>, dec: ast::DecOne) -> Option<sml_hir::DecIdx> {
     }
     ast::DecOne::DatCopyDec(dec) => {
       if !st.lang().dec.datatype_copy {
-        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("datatype copy")));
+        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("`datatype` copy")));
       }
       sml_hir::Dec::DatatypeCopy(get_name(dec.name())?, get_path(dec.path()?)?)
     }
@@ -657,7 +656,7 @@ fn get_one(st: &mut St<'_>, dec: ast::DecOne) -> Option<sml_hir::DecIdx> {
     }
     ast::DecOne::ExDec(dec) => {
       if !st.lang().dec.exception {
-        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("exception")));
+        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("`exception`")));
       }
       let iter = dec.ex_binds().filter_map(|ex_bind| {
         let name = str_util::Name::new(ex_bind.name_star_eq()?.token.text());
@@ -672,7 +671,7 @@ fn get_one(st: &mut St<'_>, dec: ast::DecOne) -> Option<sml_hir::DecIdx> {
     }
     ast::DecOne::LocalDec(dec) => {
       if !st.lang().dec.local {
-        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("local")));
+        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("`local`")));
       }
       st.inc_level();
       let fst = get(st, dec.local_dec_hd().into_iter().flat_map(|x| x.decs()));
@@ -682,7 +681,7 @@ fn get_one(st: &mut St<'_>, dec: ast::DecOne) -> Option<sml_hir::DecIdx> {
     }
     ast::DecOne::OpenDec(dec) => {
       if !st.lang().dec.open {
-        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("open")));
+        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("`open`")));
       } else if st.is_top_level() {
         st.err(ptr.text_range(), ErrorKind::TopLevelOpen);
       }
@@ -694,21 +693,22 @@ fn get_one(st: &mut St<'_>, dec: ast::DecOne) -> Option<sml_hir::DecIdx> {
     }
     ast::DecOne::InfixDec(_) | ast::DecOne::InfixrDec(_) | ast::DecOne::NonfixDec(_) => {
       if !st.lang().dec.fixity {
-        st.err(ptr.text_range(), ErrorKind::Disallowed(Item::Dec("fixity")));
+        st.err(
+          ptr.text_range(),
+          ErrorKind::Disallowed(Item::Dec("`infix`, `infixr`, or `nonfix`")),
+        );
       }
       return None;
     }
     ast::DecOne::DoDec(ref inner) => {
       // emit an error, but lower anyway.
       st.err(dec.syntax().text_range(), ErrorKind::Unsupported("`do` declarations"));
-      sml_hir::Dec::Val(
-        Vec::new(),
-        vec![sml_hir::ValBind {
-          rec: false,
-          pat: st.pat(pat::tuple([]), ptr.clone()),
-          exp: exp::get(st, inner.exp()),
-        }],
-      )
+      let bind = sml_hir::ValBind {
+        rec: false,
+        pat: st.pat(pat::tuple([]), ptr.clone()),
+        exp: exp::get(st, inner.exp()),
+      };
+      sml_hir::Dec::Val(Vec::new(), vec![bind], sml_hir::ValFlavor::Do)
     }
     ast::DecOne::StructureDec(_)
     | ast::DecOne::SignatureDec(_)
@@ -723,6 +723,19 @@ fn get_one(st: &mut St<'_>, dec: ast::DecOne) -> Option<sml_hir::DecIdx> {
     }
   };
   Some(st.dec(ret, ptr))
+}
+
+fn pats_text_range(case: &ast::FunBindCase) -> Option<sml_syntax::rowan::TextRange> {
+  let mut pats = case.pats();
+  let first = pats.next()?;
+  let mut last = pats.next()?;
+  loop {
+    last = match pats.next() {
+      Some(x) => x,
+      None => break,
+    }
+  }
+  Some(first.syntax().text_range().cover(last.syntax().text_range()))
 }
 
 fn dat_binds<I>(st: &mut St<'_>, iter: I) -> Vec<sml_hir::DatBind>

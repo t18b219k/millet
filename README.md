@@ -3,15 +3,22 @@
 A [language server][lang-srv] for [Standard ML][sml] (SML). 
 I plan to Extend to SML#.
 
+You can install the [VS Code][vscode] extension [here][marketplace].
+
 ![Millet logo](./editors/vscode/icon.png)
 
 Millet analyzes SML code without running it, and provides information like:
 
 - Inline diagnostics
 - Hover for type/documentation
+- Inlay hints
 - Jump to definition
+- Code completions
+- Code actions
 - Document symbols
 - Find all references
+
+Millet also supports SML/NJ Compilation Manager (CM) and ML Basis (MLB), allowing for analysis of multi-file SML projects.
 
 Note that Millet does not actually run SML code. To do that, you'll need an installation of SML, like [SML/NJ][smlnj] or [MLton][mlton].
 
@@ -96,7 +103,7 @@ $ cargo xtask ci
 
 If you're using VS Code, you can try out the VS Code extension:
 
-1. Open the root directory of the repo in VS Code.
+1. Open the repository in VS Code.
 2. Open the Run panel from the activity bar (the play button with bug).
 3. Select "extension" in the drop down.
 4. Press the green play button.
@@ -108,7 +115,7 @@ If you're using VS Code, you can try out the VS Code extension:
 
 ## Logo
 
-The logo features Polly Morphism, wearing a 15-150 style T-shirt, writing SML on a Millet-branded laptop, encircled with millet. It was drawn by [Yixin He][yixin].
+The logo features Polly Morphism, wearing a 15-150 style T-shirt, writing SML on a Millet-branded laptop, encircled with millet. [Yixin He][yixin] drew the logo.
 
 ## License
 

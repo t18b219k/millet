@@ -8,19 +8,23 @@ mod sharing_ty;
 mod ty_con_paths;
 mod where_ty;
 
-use crate::env::{Env, FunEnv, FunSig, Sig, SigEnv, StrEnv, TyNameSet};
 use crate::error::{ErrorKind, FunctorSugarUser};
 use crate::get_env::{get_env, get_ty_info};
 use crate::util::{ins_check_name, ins_no_dupe};
 use crate::{basis::Bs, config::Cfg, dec, st::St, ty};
 use fast_hash::FxHashSet;
-use sml_statics_types::generalize::generalize;
-use sml_statics_types::info::{IdStatus, TyEnv, TyInfo, ValEnv, ValInfo};
-use sml_statics_types::sym::{Equality, StartedSym, SymsMarker};
-use sml_statics_types::ty::{Ty, TyData, TyScheme, TyVarKind, TyVarSrc, Tys};
-use sml_statics_types::{item::Item, mode::Mode, overload, util::n_ary_con};
+use sml_statics_types::env::{Env, FunEnv, FunSig, Sig, SigEnv, StrEnv, TyNameSet};
+use sml_statics_types::info::{IdStatus, TyEnv, TyInfo, ValInfo};
+use sml_statics_types::sym::{Equality, StartedSym, SymTyInfo, SymValEnv, SymsMarker};
+use sml_statics_types::ty::{BoundTyVarData, Ty, TyData, TyScheme, TyVarSrc, Tys};
+use sml_statics_types::{generalize, item::Item, mode::Mode, overload, util::n_ary_con};
 
-pub(crate) fn get(st: &mut St, bs: &Bs, ars: &sml_hir::Arenas, root: &[sml_hir::StrDecIdx]) -> Bs {
+pub(crate) fn get(
+  st: &mut St<'_>,
+  bs: &Bs,
+  ars: &sml_hir::Arenas,
+  root: &[sml_hir::StrDecIdx],
+) -> Bs {
   let mut ac = Bs::default();
   get_str_dec(st, bs, ars, StrDecAc::Bs(&mut ac), root);
   Bs { fun_env: ac.fun_env, sig_env: ac.sig_env, env: ac.env }
@@ -41,7 +45,7 @@ impl StrDecAc<'_> {
 }
 
 fn get_str_dec(
-  st: &mut St,
+  st: &mut St<'_>,
   bs: &Bs,
   ars: &sml_hir::Arenas,
   ac: StrDecAc<'_>,
@@ -78,7 +82,7 @@ fn get_str_dec(
 }
 
 fn get_str_dec_one(
-  st: &mut St,
+  st: &mut St<'_>,
   bs: &Bs,
   ars: &sml_hir::Arenas,
   mut ac: StrDecAc<'_>,
@@ -94,7 +98,7 @@ fn get_str_dec_one(
       // @def(61)
       let mut str_env = StrEnv::default();
       for str_bind in str_binds {
-        let mut env = Env::with_def(st.def(str_dec.into()));
+        let mut env = Env::new(st.def(str_dec.into()));
         st.push_prefix(str_bind.name.clone());
         get_str_exp(st, bs, ars, &mut env, str_bind.str_exp);
         st.pop_prefix();
@@ -117,20 +121,10 @@ fn get_str_dec_one(
       // @def(67)
       for sig_bind in sig_binds {
         let marker = st.syms_tys.syms.mark();
-        let mut env = Env::with_def(st.def(str_dec.into()));
-        let should_push = match st.info.mode {
-          Mode::Regular(_) | Mode::Dynamics => true,
-          // `datatype option` is well-known
-          Mode::BuiltinLib(_) => sig_bind.name.as_str() != "OPTION",
-          Mode::PathOrder => false,
-        };
-        if should_push {
-          st.push_prefix(sig_bind.name.clone());
-        }
+        let mut env = Env::new(st.def(str_dec.into()));
+        st.push_prefix(sig_bind.name.clone());
         get_sig_exp(st, bs, ars, &mut env, sig_bind.sig_exp);
-        if should_push {
-          st.pop_prefix();
-        }
+        st.pop_prefix();
         let sig = env_to_sig(&st.syms_tys.tys, env, marker);
         if let Some(e) = ins_no_dupe(&mut sig_env, sig_bind.name.clone(), sig, Item::Sig) {
           st.err(str_dec, e);
@@ -156,7 +150,7 @@ fn get_str_dec_one(
         let param_sig = env_to_sig(&st.syms_tys.tys, param_env, marker);
         let mut bs_clone = bs.clone();
         bs_clone.env.str_env.insert(fun_bind.param_name.clone(), param_sig.env.clone());
-        let mut body_env = Env::with_def(st.def(str_dec.into()));
+        let mut body_env = Env::new(st.def(str_dec.into()));
         let marker = st.syms_tys.syms.mark();
         st.push_prefix(str_util::Name::new(format!("{}(...)", fun_bind.functor_name)));
         get_str_exp(st, &bs_clone, ars, &mut body_env, fun_bind.body);
@@ -196,7 +190,7 @@ fn get_str_dec_one(
 }
 
 fn get_str_exp(
-  st: &mut St,
+  st: &mut St<'_>,
   bs: &Bs,
   ars: &sml_hir::Arenas,
   ac: &mut Env,
@@ -242,7 +236,25 @@ fn get_str_exp(
           realize::get_env(&mut st.syms_tys.tys, &subst, &mut to_add);
           enrich::get_env(st, idx, &str_exp_env, &to_add);
         }
-        Mode::BuiltinLib(_) | Mode::PathOrder => {}
+        Mode::BuiltinLib(_) => {
+          // @test(hover::doc::std_basis_structure)
+          //
+          // this changes the def for `struct end :> SIG` or `struct end : SIG`, specifically in
+          // builtin lib files, which is a pattern we use to "conjure up" structures that ascribe to
+          // the sig.
+          //
+          // this, in conjunction with some extra hackery for "name" signature expressions (like
+          // `SIG`) in builtin lib files, lets us get the docs on the signature for that "conjured"
+          // structure as well.
+          if let Some(sml_hir::StrExp::Struct(decs)) = inner_str_exp.map(|x| &ars.str_exp[x]) {
+            if let Some(sml_hir::SigExp::Name(_)) = sig_exp.map(|x| &ars.sig_exp[x]) {
+              if decs.is_empty() {
+                ac.def = to_add.def;
+              }
+            }
+          }
+        }
+        Mode::PathOrder => {}
       }
       if matches!(asc, sml_hir::Ascription::Opaque) {
         subst.clear();
@@ -323,7 +335,7 @@ fn get_str_exp(
 }
 
 fn get_sig_exp(
-  st: &mut St,
+  st: &mut St<'_>,
   bs: &Bs,
   ars: &sml_hir::Arenas,
   ac: &mut Env,
@@ -357,6 +369,10 @@ fn get_sig_exp(
       realize::get_env(&mut st.syms_tys.tys, &subst, &mut sig_env);
       if let Some(def) = sig.env.def {
         st.info.entries.defs.sig_exp.insert(sig_exp, def);
+        // @test(hover::doc::std_basis_structure)
+        if matches!(st.info.mode, Mode::BuiltinLib(_)) {
+          ac.def = sig_env.def;
+        }
       }
       ac.append(&mut sig_env);
       match st.info.mode {
@@ -381,13 +397,13 @@ fn get_sig_exp(
   }
 }
 
-fn gen_fresh_syms(st: &mut St, subst: &mut realize::TyRealization, ty_names: &TyNameSet) {
-  let mut ac = Vec::<(StartedSym, TyInfo, Equality)>::new();
+fn gen_fresh_syms(st: &mut St<'_>, subst: &mut realize::TyRealization, ty_names: &TyNameSet) {
+  let mut ac = Vec::<(StartedSym, SymTyInfo, Equality)>::new();
   for &sym in ty_names.iter() {
     let sym_info = st.syms_tys.syms.get(sym).unwrap();
     let mut ty_info = sym_info.ty_info.clone();
     let equality = sym_info.equality;
-    let started = st.syms_tys.syms.start(sym_info.path.clone());
+    let started = st.syms_tys.syms.start(st.mk_path(sym_info.path.last().clone()));
     let bound_vars = ty_info.ty_scheme.bound_vars.clone();
     let ty_scheme = n_ary_con(&mut st.syms_tys.tys, bound_vars, started.sym());
     ty_info.ty_scheme = ty_scheme.clone();
@@ -395,7 +411,7 @@ fn gen_fresh_syms(st: &mut St, subst: &mut realize::TyRealization, ty_names: &Ty
     subst.insert(sym, ty_scheme);
   }
   for (started, mut ty_info, equality) in ac {
-    realize::get_val_env(&mut st.syms_tys.tys, subst, &mut ty_info.val_env);
+    realize::get_sym_val_env(&mut st.syms_tys.tys, subst, &mut ty_info.val_env);
     st.syms_tys.syms.finish(started, ty_info, equality);
   }
 }
@@ -411,7 +427,13 @@ fn env_to_sig(tys: &Tys, env: Env, marker: SymsMarker) -> Sig {
   Sig { ty_names, env, disallow: None }
 }
 
-fn get_spec(st: &mut St, bs: &Bs, ars: &sml_hir::Arenas, ac: &mut Env, specs: &[sml_hir::SpecIdx]) {
+fn get_spec(
+  st: &mut St<'_>,
+  bs: &Bs,
+  ars: &sml_hir::Arenas,
+  ac: &mut Env,
+  specs: &[sml_hir::SpecIdx],
+) {
   match specs[..] {
     [] => return,
     [x] => {
@@ -430,7 +452,13 @@ fn get_spec(st: &mut St, bs: &Bs, ars: &sml_hir::Arenas, ac: &mut Env, specs: &[
   }
 }
 
-fn get_spec_one(st: &mut St, bs: &Bs, ars: &sml_hir::Arenas, ac: &mut Env, spec: sml_hir::SpecIdx) {
+fn get_spec_one(
+  st: &mut St<'_>,
+  bs: &Bs,
+  ars: &sml_hir::Arenas,
+  ac: &mut Env,
+  spec: sml_hir::SpecIdx,
+) {
   match &ars.spec[spec] {
     // @def(68)
     sml_hir::Spec::Val(ty_vars, val_descs) => {
@@ -439,7 +467,7 @@ fn get_spec_one(st: &mut St, bs: &Bs, ars: &sml_hir::Arenas, ac: &mut Env, spec:
       let fixed = dec::add_fixed_ty_vars(st, spec.into(), &mut cx, TyVarSrc::Val, ty_vars);
       for val_desc in val_descs {
         let ty = ty::get(st, &cx, ars, ty::Mode::Regular, val_desc.ty);
-        let ty_scheme = generalize(&mut st.syms_tys.tys, fixed.clone(), ty)
+        let ty_scheme = generalize::get(&mut st.syms_tys.tys, fixed.clone(), ty)
           .expect("no record meta vars because no patterns in specs");
         let vi = ValInfo {
           ty_scheme,
@@ -580,7 +608,7 @@ fn get_spec_one(st: &mut St, bs: &Bs, ars: &sml_hir::Arenas, ac: &mut Env, spec:
 }
 
 /// empties other into ac, while checking for dupes.
-fn append_no_dupe(st: &mut St, idx: sml_hir::Idx, ac: &mut Env, other: &mut Env) {
+fn append_no_dupe(st: &mut St<'_>, idx: sml_hir::Idx, ac: &mut Env, other: &mut Env) {
   for (name, val) in other.str_env.drain() {
     if let Some(e) = ins_no_dupe(&mut ac.str_env, name, val, Item::Struct) {
       st.err(idx, e);
@@ -600,7 +628,7 @@ fn append_no_dupe(st: &mut St, idx: sml_hir::Idx, ac: &mut Env, other: &mut Env)
 
 // @def(80)
 fn get_ty_desc(
-  st: &mut St,
+  st: &mut St<'_>,
   idx: sml_hir::Idx,
   ty_env: &mut TyEnv,
   ty_desc: &sml_hir::TyDesc,
@@ -614,19 +642,17 @@ fn get_ty_desc(
       st.err(idx, e);
     }
   }
-  let bound_vars: Vec<_> = ty_desc
-    .ty_vars
-    .iter()
-    .map(|x| if x.is_equality() { TyVarKind::Equality } else { TyVarKind::Regular })
-    .collect();
+  let bound_vars: Vec<_> =
+    ty_desc.ty_vars.iter().map(|ty_var| BoundTyVarData::Named(ty_var.clone())).collect();
   let ty_info = TyInfo {
     ty_scheme: n_ary_con(&mut st.syms_tys.tys, bound_vars, started.sym()),
-    val_env: ValEnv::default(),
+    val_env: SymValEnv::default(),
     def: st.def(idx),
     disallow: None,
   };
   st.syms_tys.syms.finish(started, ty_info.clone(), equality);
-  if let Some(e) = ins_no_dupe(ty_env, ty_desc.name.clone(), ty_info, Item::Ty) {
+  let e = ins_no_dupe(ty_env, ty_desc.name.clone(), ty_info.with_default_val_env(), Item::Ty);
+  if let Some(e) = e {
     st.err(idx, e);
   }
 }

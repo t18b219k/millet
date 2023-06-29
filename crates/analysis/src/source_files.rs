@@ -20,10 +20,12 @@ pub(crate) fn file_and_token(
 ) -> Option<FileAndToken<'_>> {
   let file = source_files.get(&pos.path)?;
   let offset = file.syntax.pos_db.text_size_utf16(pos.val)?;
-  if !file.syntax.parse.root.syntax().text_range().contains(offset) {
+  let syntax = file.syntax.parse.root.syntax();
+  let tr = syntax.text_range();
+  if !tr.contains_inclusive(offset) {
     return None;
   }
-  let token = match file.syntax.parse.root.syntax().token_at_offset(offset) {
+  let token = match syntax.token_at_offset(offset) {
     TokenAtOffset::None => return None,
     TokenAtOffset::Single(t) => t,
     TokenAtOffset::Between(t1, t2) => {
@@ -69,7 +71,7 @@ impl FileAndToken<'_> {
 fn priority(kind: SyntaxKind) -> u8 {
   match kind {
     SyntaxKind::Name => 5,
-    SyntaxKind::OpKw => 4,
+    SyntaxKind::OpKw | SyntaxKind::Dot => 4,
     SyntaxKind::TyVar => 3,
     SyntaxKind::CharLit
     | SyntaxKind::IntLit

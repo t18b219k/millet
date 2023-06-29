@@ -1,4 +1,4 @@
-//! Static semantics for ML Basis cx.
+//! Static semantics for ML Basis files.
 
 #![deny(clippy::pedantic, missing_debug_implementations, missing_docs, rust_2018_idioms)]
 // TODO remove once rustfmt support lands
@@ -15,16 +15,14 @@ use std::fmt;
 
 pub use std_basis::StdBasis;
 
-/// The result of analyzing MLB and source cx.
+/// The result of analyzing MLB and source files.
 #[derive(Debug)]
 pub struct MlbStatics {
-  /// The errors found in MLB cx.
+  /// The errors found in MLB files.
   pub mlb_errors: Vec<Error>,
-  /// The state from sml statics.
-  pub syms_tys: sml_statics_types::St,
   /// A mapping from source file paths to information about them, including errors.
   ///
-  /// NOTE see comment in impl about having cx analyzed more than once.
+  /// NOTE see comment in impl about having files analyzed more than once.
   pub source_files: paths::PathMap<SourceFile>,
 }
 
@@ -37,6 +35,12 @@ pub struct SourceFile {
   pub statics_errors: Vec<sml_statics::Error>,
   /// Statics information from the file.
   pub info: sml_statics::info::Info,
+  /// The fixity env this file was (or should be, when updating it) parsed under.
+  ///
+  /// Empty when `fixity_across_files` is false.
+  pub fix_env: sml_fixity::Env,
+  /// The scope this file was (or should be, when updating it) static-checked under.
+  pub scope: sml_statics::basis::Bs,
 }
 
 /// An error.
@@ -99,15 +103,15 @@ impl fmt::Display for Item {
   }
 }
 
-struct St {
-  syms_tys: sml_statics_types::St,
+struct St<'a> {
+  syms_tys: &'a mut sml_statics_types::St,
   bases: paths::PathMap<MBasis>,
   source_files: paths::PathMap<SourceFile>,
   mlb_errors: Vec<Error>,
   report_diagnostics: bool,
 }
 
-impl St {
+impl<'a> St<'a> {
   fn undef(
     &mut self,
     path: paths::PathId,
@@ -147,7 +151,7 @@ impl MBasis {
 /// Runs analysis.
 #[must_use]
 pub fn get(
-  syms_tys: sml_statics_types::St,
+  syms_tys: &mut sml_statics_types::St,
   lang: &Language,
   bs: &sml_statics::basis::Bs,
   source_file_contents: &paths::PathMap<String>,
@@ -170,11 +174,11 @@ pub fn get(
     let cx = Cx { source_file_contents, bas_decs, std_basis: &std_basis, lang };
     get_group_file(&mut st, cx, &mut MBasis::default(), path);
   }
-  MlbStatics { mlb_errors: st.mlb_errors, syms_tys: st.syms_tys, source_files: st.source_files }
+  MlbStatics { mlb_errors: st.mlb_errors, source_files: st.source_files }
 }
 
 fn get_bas_exp(
-  st: &mut St,
+  st: &mut St<'_>,
   cx: Cx<'_>,
   path: paths::PathId,
   scope: &MBasis,
@@ -198,7 +202,7 @@ fn get_bas_exp(
 }
 
 fn get_bas_dec(
-  st: &mut St,
+  st: &mut St<'_>,
   cx: Cx<'_>,
   path: paths::PathId,
   scope: &MBasis,
@@ -247,7 +251,7 @@ fn get_bas_dec(
         let contents = cx.source_file_contents.get(path).expect("no source file");
         let mut fix_env = scope.fix_env.clone();
         let syntax = SourceFileSyntax::new(&mut fix_env, cx.lang, contents);
-        get_source_file(st, *path, scope, ac, fix_env, syntax);
+        get_source_file(st, cx.lang, *path, scope, ac, fix_env, syntax);
       }
       mlb_hir::PathKind::Group => match st.bases.get(path) {
         Some(mb) => ac.append(mb.clone()),
@@ -258,8 +262,8 @@ fn get_bas_dec(
       let mut syntaxes: paths::PathMap<_> = paths
         .iter()
         .map(|path| {
-          let mut fix_env = scope.fix_env.clone();
           let contents = cx.source_file_contents.get(path).expect("no source file");
+          let mut fix_env = scope.fix_env.clone();
           let syntax = SourceFileSyntax::new(&mut fix_env, cx.lang, contents);
           (*path, (fix_env, syntax))
         })
@@ -269,7 +273,7 @@ fn get_bas_dec(
         .map(|(&path, (_, syntax))| (path, (&syntax.lower.arenas, syntax.lower.root.as_slice())))
         .collect();
       assert_eq!(syntaxes.len(), hir_roots.len());
-      let order = sml_statics::path_order::get(st.syms_tys.clone(), scope.bs.clone(), hir_roots);
+      let order = sml_statics::path_order::get(st.syms_tys, scope.bs.clone(), hir_roots);
       assert_eq!(syntaxes.len(), order.len());
       // we could make a sequence of source path defs from the order and recurse on that, but doing
       // it like this lets us avoid re-parsing the syntax. it is a little un-DRY though in the sense
@@ -278,7 +282,7 @@ fn get_bas_dec(
       for path in order {
         let mut one_m_basis = MBasis::default();
         let (fix_env, syntax) = syntaxes.remove(&path).expect("path from order is in syntaxes");
-        get_source_file(st, path, &scope, &mut one_m_basis, fix_env, syntax);
+        get_source_file(st, cx.lang, path, &scope, &mut one_m_basis, fix_env, syntax);
         scope.append(one_m_basis.clone());
         ac.append(one_m_basis);
       }
@@ -296,7 +300,8 @@ fn get_bas_dec(
 }
 
 fn get_source_file(
-  st: &mut St,
+  st: &mut St<'_>,
+  lang: &Language,
   path: paths::PathId,
   scope: &MBasis,
   ac: &mut MBasis,
@@ -305,11 +310,25 @@ fn get_source_file(
 ) {
   let mode = sml_statics_types::mode::Mode::Regular(Some(path));
   let checked =
-    sml_statics::get(&mut st.syms_tys, &scope.bs, mode, &syntax.lower.arenas, &syntax.lower.root);
-  ac.append(MBasis { fix_env, bas_env: FxHashMap::default(), bs: checked.info.basis().clone() });
+    sml_statics::get(st.syms_tys, &scope.bs, mode, &syntax.lower.arenas, &syntax.lower.root);
+  ac.append(MBasis {
+    fix_env: if lang.fixity_across_files { fix_env } else { sml_fixity::Env::default() },
+    bas_env: FxHashMap::default(),
+    bs: checked.info.basis().clone(),
+  });
   let mut info = checked.info;
   add_all_doc_comments(syntax.parse.root.syntax(), &syntax.lower, &mut info);
-  let mut file = SourceFile { syntax, statics_errors: checked.errors, info };
+  let mut file = SourceFile {
+    syntax,
+    statics_errors: checked.errors,
+    info,
+    fix_env: if lang.fixity_across_files {
+      scope.fix_env.clone()
+    } else {
+      sml_fixity::Env::default()
+    },
+    scope: scope.bs.clone(),
+  };
   if !st.report_diagnostics {
     file.syntax.lex_errors = Vec::new();
     file.syntax.parse.errors = Vec::new();
@@ -328,7 +347,7 @@ fn get_source_file(
 }
 
 /// Processes a single group file.
-fn get_group_file(st: &mut St, cx: Cx<'_>, ac: &mut MBasis, path: paths::PathId) {
+fn get_group_file(st: &mut St<'_>, cx: Cx<'_>, ac: &mut MBasis, path: paths::PathId) {
   let dec = cx.bas_decs.get(&path).expect("no bas dec");
   let mut path_ac = MBasis::default();
   get_bas_dec(st, cx, path, cx.std_basis, &mut path_ac, dec);
@@ -354,4 +373,21 @@ pub fn add_all_doc_comments(
       info.add_doc(idx, doc);
     }
   }
+}
+
+/// Update a single source file.
+pub fn update_one(
+  syms_tys: &mut sml_statics_types::St,
+  lang: &Language,
+  sf: &mut SourceFile,
+  path: paths::PathId,
+  contents: &str,
+) {
+  let mut fix_env = sml_fixity::STD_BASIS.clone();
+  sf.syntax = sml_file_syntax::SourceFileSyntax::new(&mut fix_env, lang, contents);
+  let mode = sml_statics_types::mode::Mode::Regular(Some(path));
+  let checked =
+    sml_statics::get(syms_tys, &sf.scope, mode, &sf.syntax.lower.arenas, &sf.syntax.lower.root);
+  sf.info = checked.info;
+  add_all_doc_comments(sf.syntax.parse.root.syntax(), &sf.syntax.lower, &mut sf.info);
 }

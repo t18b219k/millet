@@ -676,11 +676,12 @@ Compare with `:`, which performs transparent ascription in the context of signat
 Separate a pattern from its expression in a matcher arm.
 
 ```sml
-val describe = fn
-  0 => "nothing"
-| 1 => "single"
-| 2 => "dual"
-| _ => "other"
+fun describe x =
+  case x of
+    0 => "nothing"
+  | 1 => "single"
+  | 2 => "pair"
+  | _ => "other"
 ```
 
 Compare with `->`, which denotes a function type.
@@ -795,7 +796,7 @@ Can also be used to separate declarations, but this is unnecessary.
 
 Also indicates the end of input when in a REPL.
 
-Compare with `,`, which can also separate expression, but constructs tuples or lists (when used with `()` and `[]` respectively).
+Compare with `,`, which can also separate expressions, but constructs tuples or lists (when used with `()` and `[]` respectively).
 
 ## `=`
 
@@ -852,11 +853,12 @@ Separate arms in a matcher, constructors in a datatype, or cases in a `fun`.
 Note that a leading `|` before the first item is not allowed.
 
 ```sml
-val describe = fn
-  0 => "nothing"
-| 1 => "single"
-| 2 => "dual"
-| _ => "other"
+fun describe x =
+  case x of
+    0 => "nothing"
+  | 1 => "single"
+  | 2 => "pair"
+  | _ => "other"
 
 datatype ans = Yes | No
 

@@ -20,7 +20,8 @@ pub(crate) fn get(
   comma_seq(f, iter)?;
   if let Some(n) = pats.len().checked_sub(max_len) {
     if n != 0 {
-      write!(f, ", and {n} others")?;
+      let s = if n == 1 { "" } else { "s" };
+      write!(f, ", and {n} other{s}")?;
     }
   }
   Ok(())
@@ -78,6 +79,7 @@ impl fmt::Display for ConPatDisplay<'_> {
       Con::Record { labels, allows_other } => {
         assert_eq!(labels.len(), args.len());
         let is_tuple = !*allows_other
+          && labels.len() != 1
           && labels.iter().enumerate().all(|(idx, lab)| sml_hir::Lab::tuple(idx) == *lab);
         if is_tuple {
           f.write_str("(")?;

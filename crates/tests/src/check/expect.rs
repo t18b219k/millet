@@ -118,6 +118,12 @@ impl Expect {
     if let Some(msg) = msg.strip_prefix("use: ") {
       return Self { kind: Kind::Use, msg: msg.to_owned() };
     }
+    if let Some(msg) = msg.strip_prefix("completions: ") {
+      return Self { kind: Kind::Completions { with_std: false }, msg: msg.to_owned() };
+    }
+    if let Some(msg) = msg.strip_prefix("completions(with-std): ") {
+      return Self { kind: Kind::Completions { with_std: true }, msg: msg.to_owned() };
+    }
     if let Some(msg) = msg.strip_prefix("exact: ") {
       return Self { kind: Kind::Exact, msg: msg.to_owned() };
     }
@@ -132,7 +138,7 @@ impl fmt::Display for Expect {
 }
 
 /// A kind of expectation.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) enum Kind {
   /// Hovering over this should show something.
   Hover,
@@ -140,6 +146,8 @@ pub(crate) enum Kind {
   Def,
   /// This points at a usage site for something.
   Use,
+  /// The listed completions should be available at this region.
+  Completions { with_std: bool },
   /// There should be an error that exactly matches the given message.
   Exact,
   /// There should be an error that contains the message.
@@ -150,9 +158,16 @@ impl fmt::Display for Kind {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
       Kind::Hover => f.write_str("hover"),
-      Kind::Exact => f.write_str("exact"),
       Kind::Def => f.write_str("def"),
       Kind::Use => f.write_str("use"),
+      Kind::Completions { with_std } => {
+        f.write_str("completions")?;
+        if *with_std {
+          f.write_str("(with-std)")?;
+        }
+        Ok(())
+      }
+      Kind::Exact => f.write_str("exact"),
       Kind::Contains => f.write_str("contains"),
     }
   }

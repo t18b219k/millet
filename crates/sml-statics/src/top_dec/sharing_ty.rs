@@ -1,13 +1,13 @@
 //! Dealing with `sharing` and `sharing type`.
 
-use crate::{env::Env, error::ErrorKind, get_env::get_ty_info, st::St, top_dec::realize};
+use crate::{error::ErrorKind, get_env::get_ty_info, st::St, top_dec::realize};
 use fast_hash::FxHashSet;
 use sml_statics_types::ty::{TyData, TyScheme};
-use sml_statics_types::{equality, sym::SymsMarker};
+use sml_statics_types::{env::Env, equality, sym::SymsMarker};
 
 /// `sharing type` directly uses this, and the `sharing` derived form eventually uses this.
 pub(crate) fn get(
-  st: &mut St,
+  st: &mut St<'_>,
   idx: sml_hir::Idx,
   marker: SymsMarker,
   inner_env: &mut Env,
@@ -52,8 +52,7 @@ pub(crate) fn get(
   });
   let syms: FxHashSet<_> = syms.collect();
   // the None case is possible, but we should have errored already.
-  //
-  // @test(deviations::smlnj::sharing_via_abbreviation_short)
+  cov_mark::hit("sharing_via_abbreviation_short");
   if let Some(ac) = ac {
     let mut subst = realize::TyRealization::default();
     for sym in syms {
@@ -69,7 +68,7 @@ struct SharingTyScheme {
 }
 
 impl SharingTyScheme {
-  fn new(st: &mut St, ty_scheme: TyScheme) -> Self {
+  fn new(st: &mut St<'_>, ty_scheme: TyScheme) -> Self {
     let equality =
       equality::get_ty_scheme(st.info.mode, &st.syms_tys.syms, &mut st.syms_tys.tys, &ty_scheme)
         .is_ok();

@@ -10,17 +10,20 @@ test = false
 doctest = false
 
 [dependencies]
-code-h2-md-map = { git = "https://github.com/azdavis/language-util.git" }
-drop_bomb = "0.1"
-fast-hash = { git = "https://github.com/azdavis/language-util.git" }
-fmt-util = { git = "https://github.com/azdavis/language-util.git" }
-idx = { git = "https://github.com/azdavis/language-util.git" }
-once_cell = "1"
-paths = { git = "https://github.com/azdavis/language-util.git" }
-chain-map = { path = "../chain-map" }
-sml-hir = { path = "../sml-hir" }
-sml-path = { path = "../sml-path" }
-str-util = { git = "https://github.com/azdavis/language-util.git" }
+code-h2-md-map.workspace = true
+drop_bomb.workspace = true
+fast-hash.workspace = true
+fmt-util.workspace = true
+idx.workspace = true
+once_cell.workspace = true
+paths.workspace = true
+str-util.workspace = true
+
+chain-map.path = "../chain-map"
+config.path = "../config"
+cov-mark.path = "../cov-mark"
+sml-hir.path = "../sml-hir"
+sml-path.path = "../sml-path"
 
 [features]
 sync = ["chain-map/sync"]

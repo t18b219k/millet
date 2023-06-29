@@ -1,9 +1,9 @@
 //! The "raw" test runner. Usually we use various convenient shortcuts on top of this.
 
+use crate::check::{expect, input, reason, show};
 use fast_hash::FxHashMap;
 use once_cell::sync::Lazy;
-
-use crate::check::{expect, input, reason, show};
+use std::collections::BTreeSet;
 
 /// A std basis.
 #[derive(Debug, Clone, Copy)]
@@ -34,6 +34,8 @@ pub(crate) enum Limit {
   None,
   /// Only check the first.
   First,
+  /// Limit all, i.e. check no errors.
+  All,
 }
 
 /// What we expect the input to be.
@@ -114,13 +116,14 @@ where
   // NOTE: we used to emit an error here if want_err_len was not 0 or 1 but no longer. this
   // allows us to write multiple error expectations. e.g. in the diagnostics tests. but note that
   // only one expectation is actually used.
-  let mut an = analysis::Analysis::new(std_basis, config::ErrorLines::One, None, None);
+  let mut an = analysis::Analysis::new(std_basis, analysis::Options::default());
   let iter = an.get_many(&input).into_iter().flat_map(|(id, errors)| {
     errors.into_iter().filter_map(move |e| (e.severity >= opts.min_severity).then_some((id, e)))
   });
   let errors: Vec<_> = match opts.limit {
     Limit::None => iter.collect(),
     Limit::First => iter.take(1).collect(),
+    Limit::All => Vec::new(),
   };
   let mut defs = FxHashMap::<&str, expect::Region>::default();
   for (&path, file) in &ck.files {
@@ -133,7 +136,7 @@ where
               text_pos::PositionUtf16 { line, col: col_start }
             }
             expect::Region::Line(n) => {
-              ck.reasons.push(reason::Reason::InvalidInexact(path.wrap(n), expect::Kind::Hover));
+              ck.reasons.push(reason::Reason::InvalidInexact(path.wrap(n), expect.kind));
               continue;
             }
           };
@@ -160,7 +163,7 @@ where
               text_pos::PositionUtf16 { line, col: col_start }
             }
             expect::Region::Line(n) => {
-              ck.reasons.push(reason::Reason::InvalidInexact(path.wrap(n), expect::Kind::Use));
+              ck.reasons.push(reason::Reason::InvalidInexact(path.wrap(n), expect.kind));
               continue;
             }
           };
@@ -194,6 +197,30 @@ where
             }
           }
         }
+        expect::Kind::Completions { with_std } => {
+          let pos = match region {
+            expect::Region::Exact { line, col_start, .. } => {
+              text_pos::PositionUtf16 { line, col: col_start }
+            }
+            expect::Region::Line(n) => {
+              ck.reasons.push(reason::Reason::InvalidInexact(path.wrap(n), expect.kind));
+              continue;
+            }
+          };
+          let completion_items = an.completions(path.wrap(pos)).unwrap_or_default();
+          let mut want: BTreeSet<_> = if expect.msg == "<none>" {
+            BTreeSet::new()
+          } else {
+            expect.msg.split(", ").map(ToOwned::to_owned).collect()
+          };
+          if with_std {
+            want.extend(STD_NAMES.iter().map(|&x| x.to_owned()));
+          }
+          let got: BTreeSet<_> = completion_items.into_iter().map(|x| x.label).collect();
+          if want != got {
+            ck.reasons.push(reason::Reason::MismatchedCompletions(path.wrap(region), want, got));
+          }
+        }
         expect::Kind::Exact | expect::Kind::Contains => {}
       }
     }
@@ -213,6 +240,11 @@ where
     (Outcome::Fail, true) => panic!("UNEXPECTED PASS: {ck}"),
   }
 }
+
+const STD_NAMES: [&str; 20] = [
+  "*", "+", "-", "/", "::", "<", "<=", "<>", "=", ">", ">=", "abs", "div", "false", "mod", "nil",
+  "ref", "true", "use", "~",
+];
 
 /// Returns a simple "filesystem" of a single source file and a single group file pointing to that
 /// source file.

@@ -1,5 +1,6 @@
 //! Configuration stored in a config file.
 
+use crate::tool::Tool;
 use fast_hash::FxHashMap;
 use serde::Deserialize;
 use str_util::SmolStr;
@@ -71,6 +72,9 @@ pub enum Severity {
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Language {
+  /// Whether fixity declarations can take effect across files.
+  #[serde(default)]
+  pub fixity_across_files: bool,
   /// Configuration for declarations.
   #[serde(default)]
   pub dec: Dec,
@@ -80,6 +84,9 @@ pub struct Language {
   /// Configuration for values.
   #[serde(default)]
   pub val: FxHashMap<SmolStr, bool>,
+  /// Configuration for structures.
+  #[serde(default)]
+  pub structure: FxHashMap<SmolStr, bool>,
 }
 
 /// Configuration for declarations.
@@ -168,21 +175,4 @@ pub struct Exp {
   pub case: Tool,
   #[serde(default, rename = "fn")]
   pub fn_: Tool,
-}
-
-/// A default-`true` `bool`.
-#[derive(Debug, Clone, Copy, Deserialize)]
-pub struct Tool(pub bool);
-
-impl Default for Tool {
-  fn default() -> Self {
-    Self(true)
-  }
-}
-
-impl std::ops::Not for Tool {
-  type Output = bool;
-  fn not(self) -> Self::Output {
-    !self.0
-  }
 }

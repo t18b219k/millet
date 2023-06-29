@@ -22,7 +22,7 @@ Install the extension from the [VS Code marketplace][marketplace].
 
 ### Other editors
 
-1. Clone the repository.
+1. Clone or download the repository.
 2. Build from source with `cargo build --release --bin millet-ls`.
 3. Put the compiled `target/release/millet-ls` binary somewhere your editor can find it.
 4. Set up your editor to use that binary to process SML files.
@@ -31,32 +31,32 @@ Install the extension from the [VS Code marketplace][marketplace].
 
 ### On a file
 
-When VS Code is not opened onto a folder, Millet analyzes each SML file open in the editor in isolation.
+When VS Code is not opened onto a folder, Millet only provides basic analysis of individual SML files. For project-wide analysis and access to the most features, open VS Code onto a folder instead.
 
 ### On a folder
 
-Most of the time, you'll probably want to use Millet to analyze an entire SML project. After opening VS Code onto a folder containing a project, Millet will look for a "group file" directly contained that folder.
+After opening VS Code onto a folder, Millet will look for a "group file" directly contained in that folder.
 
-A "group file" is either
+A group file is either
 
 - a [ML Basis][mlb] file (`.mlb`), or
 - a [SML/NJ Compilation Manager][cm] file (`.cm`).
 
-These file types list out SML source files and other group files to organize the project.
+These files list out SML source files and other group files to organize the project.
 
 For more exotic projects, you may wish to create an optional [`millet.toml`](#millettoml).
 
-Some important notes:
+Note that a group file, or a `millet.toml` file pointing to a group file, **must** be present **directly** in the directory that you open VS Code onto. It can't be in subdirectories, because Millet will not look in subdirectories, unless you tell it to via `millet.toml`.
 
-- A group file, or a `millet.toml` file pointing to a group file, **must** be present **directly** in the directory that you open VS Code onto. It can't be in subdirectories, because Millet will not look in subdirectories, unless you tell it to via `millet.toml`.
-- If a file is not transitively reachable from the root group file, it **will not** be analyzed.
+If a file is not transitively reachable from the root group file, it **will not** be analyzed.
 
 ## Configuration
 
-There are three places where Millet can be configured:
+There are four places where Millet can be configured:
 
 - [`millet.toml`](#millettoml). This is for project-wide settings.
 - [VS Code settings](#vs-code-settings). This is for user-specific settings.
+- [Language server initialization](#language-server-initialization). This is for advanced use-cases and/or non-VS-Code editors.
 - [ML Basis annotations](#ml-basis-annotations). This is for specific files.
 
 ### `millet.toml`
@@ -75,12 +75,16 @@ QUZ = { workspace-path = "pant" }
 5011.severity = "warning"
 4015.severity = "error"
 5029.severity = "ignore"
+[language]
+fixity-across-files = true
 [language.exp]
 while = false
 [language.dec]
 functor = true
 [language.val]
 "=" = false
+[language.structure]
+"Ref" = false
 ```
 
 #### `version`
@@ -126,6 +130,14 @@ Overrides the default severity for this [diagnostic](#inline-diagnostics). The a
 #### `language`
 
 Configuration for the language.
+
+#### `language.fixity-across-files`
+
+Whether fixity declarations (`infix`, `infixr`, and `nonfix`) can take effect across files. Defaults to `false`.
+
+When this is `false`, each file is parsed starting with the default fixity environment provided by the standard basis. This means we can incrementally re-parse files and/or parse files in parallel since there are no inter-file dependencies when parsing. (At time of writing, we do not currently do this.)
+
+When this is `true`, we cannot do the above things, and we must also use more memory to store the fixity environments used when parsing each file.
 
 #### `language.dec`
 
@@ -208,9 +220,19 @@ Note that some standard basis library declarations are re-declared at different 
 
 No error is currently emitted when disallowing a path that does not exist. To be sure you spelled the path correctly, try running Millet with the given config file, and see if errors are correctly emitted when you try to use the value.
 
+#### `language.structure`
+
+Configuration for structures.
+
+#### `language.structure.<path>`
+
+Whether the `<path>` is allowed.
+
+See docs for [`language.val.<path>`](#languagevalpath).
+
 ### VS Code settings
 
-Millet offers the following configuration options via VS Code settings, which are stored as [JSON][], often in `.vscode/settings.json`:
+Millet has VS Code specific settings, which are stored as [JSON][]. You may need to reload VS Code and/or Millet to pick up the changes.
 
 <!-- @begin vscode-config -->
 
@@ -259,6 +281,13 @@ Enable the language server.
 - Type: `boolean`
 - Default: `true`
 
+#### `millet.server.fileSystemWatcher.enable`
+
+Use a file system watcher to send events when files change, if one is available.
+
+- Type: `boolean`
+- Default: `true`
+
 #### `millet.server.hover.token.enable`
 
 Show information about tokens on hover.
@@ -276,6 +305,14 @@ When set to the empty string `""` (the default), use the path to the one that's 
 - Default: `""`
 
 <!-- @end vscode-config -->
+
+### Language server initialization
+
+If you're using VS Code, the VS Code extension automatically passes the appropriate required custom initialization options to the language server process when starting it up.
+
+If you're not using VS Code, you will have to arrange to pass these initialization options through some other editor-specific means.
+
+The initialization options are a subset of the VS Code config, but rearranged and renamed slightly. Consult the implementation of the VS Code extension to see what options are sent. Additionally, consult the documentation for the VS Code configuration to see what types the configuration options must be.
 
 ### ML Basis annotations
 
@@ -299,7 +336,7 @@ For example, suppose we have 3 files, each quite similar, and each containing a 
 
 Even though each file would normally emit a type error, given the following root ML Basis file, the errors are reported in `a.sml` and `c.sml` only, and not `b.sml`:
 
-```mlb
+```text
 a.sml
 ann "milletDiagnosticsIgnore all" in
   b.sml
@@ -399,9 +436,45 @@ Millet shows things like:
 - Documentation for an item.
 - Documentation for tokens.
 
+See the section on [doc comments](#doc-comments) to provide your own documentation for items.
+
+### Inlay hints
+
+In SML files, Millet can show inlay hints with type annotations.
+
+In VS Code, inlay hints can be enabled or disabled across the entire editor via `editor.inlayHints.enabled`.
+
 ### Jump/peek definition
 
 In SML files, Millet allows jumping to or peeking the definition of named items, like variables.
+
+### Completions
+
+Millet provides completions for the current cursor location. Completions can be triggered by typing a regular name or `.` after a name. When typing `.`, Millet will traverse the existing path.
+
+In this example, Millet provides the given completions at the given cursor location.
+
+```sml
+structure Foo = struct
+  val bar = 3
+  val quz = "hi"
+end
+
+val _ = Foo.
+(**         ^ completions: bar, quz *)
+```
+
+### Code action: fill case
+
+When your cursor is over the `case` or `of` keywords of a `case` expression, Millet can fill in the case with arms for each variant of the type of the head expression.
+
+### Document symbols
+
+Millet can show all the symbols in a document, and information about those symbols.
+
+### Find all references
+
+Millet supports finding references to a symbol.
 
 ### Doc comments
 
@@ -423,18 +496,6 @@ So, put `(*!` on its own line, then the doc comment in Markdown with leading `*`
 Millet allows writing `...` or `_` as a "hole" in various contexts (expression, type, declaration, etc) in SML files. They are parsed, but rejected in later stages of analysis.
 
 This allows writing "example" code that actually parses. In the case of expression holes, the error message also reports the inferred type of the hole.
-
-### Code action: fill case
-
-When your cursor is over the `case` or `of` keywords of a `case` expression, Millet can fill in the case with arms for each variant of the type of the head expression.
-
-### Document symbols
-
-Millet can show all the symbols in a document, and information about those symbols.
-
-### Find all references
-
-Millet supports finding references to a symbol.
 
 ### Formatter
 
@@ -471,13 +532,13 @@ So, the formatter is disabled by default, and great care should be taken when us
 
 The naive Millet formatter employs exceedingly unsophisticated strategies to break code across many lines. What this means is that large expressions (e.g. a function call expression with many long arguments) may be formatted all on one line.
 
-The suggested workaround is to use a `let ... in ... end` expression and split out sub-expressions into variables. So instead of
+The suggested workaround is to use a `let ... in ... end` expression and split out sub-expressions into variables. So instead of:
 
 ```sml
 Boop.beep (if bar x then quz y else Fee.Fi.Fo.fum z) (fn res => s (blab :: res)) (fn () => k []) (fn (x, ac) => ac andalso x) (xs @ ys @ zs)
 ```
 
-Try something like
+Try something like:
 
 ```sml
 let

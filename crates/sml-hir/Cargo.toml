@@ -10,8 +10,9 @@ doctest = false
 test = false
 
 [dependencies]
-la-arena = "0.3"
-str-util = { git = "https://github.com/azdavis/language-util.git" }
-sml-path = { path = "../sml-path" }
-sml-lab = { path = "../sml-lab" }
-sml-scon = { path = "../sml-scon" }
+la-arena.workspace = true
+str-util.workspace = true
+
+sml-lab.path = "../sml-lab"
+sml-path.path = "../sml-path"
+sml-scon.path = "../sml-scon"

@@ -9,16 +9,15 @@ mod matcher;
 mod source_files;
 
 use paths::{PathId, PathMap, WithPath};
-use sml_statics_types::{def, mode::Mode};
+use sml_statics_types::{def, display::MetaVarNames, env::Env};
 use sml_syntax::ast::{self, AstNode as _, SyntaxNodePtr};
 use std::process::{Command, Stdio};
 use std::{error::Error, fmt, io::Write as _};
-use text_pos::{PositionUtf16, RangeUtf16};
+use text_pos::{PositionDb, PositionUtf16, RangeUtf16};
 use text_size_util::TextRange;
 
-pub use crate::diagnostic::Diagnostic;
+pub use crate::diagnostic::{Diagnostic, Options};
 pub use mlb_statics::StdBasis;
-pub use sml_statics::info::CompletionItem;
 
 /// The url to go to for information about diagnostics.
 pub const URL: &str = "https://github.com/azdavis/millet/blob/main/docs/diagnostics";
@@ -35,39 +34,13 @@ pub struct Analysis {
 impl Analysis {
   /// Returns a new `Analysis`.
   #[must_use]
-  pub fn new(
-    std_basis: StdBasis,
-    lines: config::ErrorLines,
-    ignore: Option<config::init::DiagnosticsIgnore>,
-    format: Option<config::init::FormatEngine>,
-  ) -> Self {
+  pub fn new(std_basis: StdBasis, diagnostics_options: diagnostic::Options) -> Self {
     Self {
+      syms_tys: std_basis.syms_tys().clone(),
       std_basis,
-      diagnostics_options: diagnostic::Options { lines, ignore, format },
+      diagnostics_options,
       source_files: PathMap::default(),
-      syms_tys: sml_statics_types::St::default(),
     }
-  }
-
-  /// Given the contents of one isolated file, return the diagnostics for it.
-  pub fn get_one(&self, contents: &str) -> Vec<Diagnostic<text_pos::RangeUtf16>> {
-    let mut fix_env = sml_fixity::STD_BASIS.clone();
-    let lang = config::lang::Language::default();
-    let syntax = sml_file_syntax::SourceFileSyntax::new(&mut fix_env, &lang, contents);
-    let mut syms_tys = self.std_basis.syms_tys().clone();
-    let basis = self.std_basis.basis().clone();
-    let mode = Mode::Regular(None);
-    let checked =
-      sml_statics::get(&mut syms_tys, &basis, mode, &syntax.lower.arenas, &syntax.lower.root);
-    let mut info = checked.info;
-    mlb_statics::add_all_doc_comments(syntax.parse.root.syntax(), &syntax.lower, &mut info);
-    let file = mlb_statics::SourceFile { syntax, statics_errors: checked.errors, info };
-    diagnostic::source_file(
-      &file,
-      &syms_tys,
-      self.diagnostics_options,
-      text_pos::PositionDb::range_utf16,
-    )
   }
 
   /// Given information about many interdependent source files and their groupings, returns a
@@ -79,21 +52,33 @@ impl Analysis {
     self.get_many_impl(input, text_pos::PositionDb::range_utf16)
   }
 
+  /// Given information about many interdependent source files and their groupings, returns a
+  /// mapping from source paths to diagnostics.
+  pub fn get_many_text_range(
+    &mut self,
+    input: &input::Input,
+  ) -> PathMap<Vec<Diagnostic<TextRange>>> {
+    self.get_many_impl(input, |_, b| Some(b))
+  }
+
   fn get_many_impl<F, R>(&mut self, input: &input::Input, f: F) -> PathMap<Vec<Diagnostic<R>>>
   where
     F: Fn(&text_pos::PositionDb, text_size_util::TextRange) -> Option<R>,
   {
-    let syms_tys = self.std_basis.syms_tys().clone();
     let mut basis = self.std_basis.basis().clone();
     for path in &input.lang.val {
       // TODO do not ignore failed disallow
       _ = basis.disallow_val(path);
     }
+    for path in &input.lang.structure {
+      // TODO do not ignore failed disallow
+      _ = basis.disallow_str(path);
+    }
     let groups: paths::PathMap<_> =
       input.groups.iter().map(|(&path, group)| (path, &group.bas_dec)).collect();
     let res = elapsed::log("mlb_statics::get", || {
       mlb_statics::get(
-        syms_tys,
+        &mut self.syms_tys,
         &input.lang,
         &basis,
         &input.sources,
@@ -102,7 +87,6 @@ impl Analysis {
       )
     });
     self.source_files = res.source_files;
-    self.syms_tys = res.syms_tys;
     std::iter::empty()
       .chain(res.mlb_errors.into_iter().filter_map(|err| {
         let path = err.path();
@@ -133,6 +117,14 @@ impl Analysis {
       .collect()
   }
 
+  /// Update only the give path to have the new text, not recalculating diagnostics or anything in
+  /// any other paths.
+  pub fn update_one(&mut self, input: &input::Input, path: paths::PathId) {
+    let source_file = self.source_files.get_mut(&path).expect("no source file");
+    let contents = input.sources.get(&path).expect("no contents");
+    mlb_statics::update_one(&mut self.syms_tys, &input.lang, source_file, path, contents);
+  }
+
   /// Returns a Markdown string with information about this position.
   #[must_use]
   pub fn get_md(&self, pos: WithPath<PositionUtf16>, token: bool) -> Option<(String, RangeUtf16)> {
@@ -141,18 +133,12 @@ impl Analysis {
     let ty_md: Option<String>;
     let range = match ft.get_ptr_and_idx() {
       Some((ptr, idx)) => {
-        ty_md = ft.file.info.get_ty_md(&self.syms_tys, idx);
+        ty_md = ft.file.info.get_ty_md(&self.syms_tys, idx, self.diagnostics_options.lines);
         parts.extend(ty_md.as_deref());
-        parts.extend(ft.file.info.get_defs(idx).into_iter().filter_map(|def| match def {
-          def::Def::Path(path, idx) => {
-            let info = match path {
-              def::Path::Regular(path) => &self.source_files.get(&path)?.info,
-              def::Path::BuiltinLib(name) => self.std_basis.get_info(name)?,
-            };
-            info.get_doc(idx)
-          }
-          def::Def::Primitive(prim) => Some(prim.doc()),
-        }));
+        let this = def::Def::Path(def::Path::Regular(pos.path), idx);
+        parts.extend(self.get_doc(this));
+        let defs = ft.file.info.get_defs(idx);
+        parts.extend(defs.into_iter().filter_map(|def| self.get_doc(def)));
         ptr.text_range()
       }
       None => ft.token.text_range(),
@@ -165,6 +151,19 @@ impl Analysis {
     }
     let range = ft.file.syntax.pos_db.range_utf16(range)?;
     Some((parts.join("\n\n---\n\n"), range))
+  }
+
+  fn get_doc(&self, def: def::Def) -> Option<&str> {
+    match def {
+      def::Def::Path(path, idx) => {
+        let info = match path {
+          def::Path::Regular(path) => &self.source_files.get(&path)?.info,
+          def::Path::BuiltinLib(name) => self.std_basis.get_info(name)?,
+        };
+        info.get_doc(idx)
+      }
+      def::Def::Primitive(prim) => Some(prim.doc()),
+    }
   }
 
   /// Returns the range of the definition of the item at this position.
@@ -231,12 +230,9 @@ impl Analysis {
     path: PathId,
     tab_size: u32,
   ) -> Result<(String, PositionUtf16), FormatError> {
-    let engine = match self.diagnostics_options.format {
-      None => return Err(FormatError::Disabled),
-      Some(x) => x,
-    };
     let file = self.source_files.get(&path).ok_or(FormatError::NoFile)?;
-    let buf = match engine {
+    let buf = match self.diagnostics_options.format {
+      config::init::FormatEngine::None => return Err(FormatError::Disabled),
       config::init::FormatEngine::Naive => {
         sml_naive_fmt::get(&file.syntax.parse.root, tab_size).map_err(FormatError::NaiveFmt)?
       }
@@ -261,10 +257,10 @@ impl Analysis {
     Ok((buf, file.syntax.pos_db.end_position_utf16()))
   }
 
-  /// Returns the `RangeUtf16` for the `TextRange` in this `path`.
+  /// Returns the `PositionDb` for the source `path`.
   #[must_use]
-  pub fn source_range_utf16(&self, path: PathId, range: TextRange) -> Option<RangeUtf16> {
-    self.source_files.get(&path)?.syntax.pos_db.range_utf16(range)
+  pub fn source_pos_db(&self, path: PathId) -> Option<&PositionDb> {
+    Some(&self.source_files.get(&path)?.syntax.pos_db)
   }
 
   /// Returns the symbols for the file.
@@ -304,37 +300,169 @@ impl Analysis {
   #[must_use]
   pub fn completions(&self, pos: WithPath<PositionUtf16>) -> Option<Vec<CompletionItem>> {
     let ft = source_files::file_and_token(&self.source_files, pos)?;
-    Some(ft.file.info.completions(&self.syms_tys))
+    let mut envs = [&ft.file.scope.env, &ft.file.info.basis().env].map(Some);
+    match ft.token.kind() {
+      sml_syntax::SyntaxKind::BlockComment => return None,
+      sml_syntax::SyntaxKind::Dot => {
+        let grandparent = ft.token.parent()?.parent()?;
+        let path = sml_syntax::ast::Path::cast(grandparent)?;
+        for env in &mut envs {
+          *env = env.and_then(|env| get_env(env, &path));
+        }
+      }
+      _ => {}
+    }
+    let mut mvs = MetaVarNames::new(&self.syms_tys.tys);
+    let mut ret = Vec::<CompletionItem>::new();
+    for env in envs.into_iter().flatten() {
+      self.env_completions(env, &mut mvs, &mut ret);
+    }
+    Some(ret)
+  }
+
+  fn env_completions(&self, env: &Env, mvs: &mut MetaVarNames<'_>, ac: &mut Vec<CompletionItem>) {
+    ac.extend(env.str_env.iter().map(|(name, env)| CompletionItem {
+      label: name.as_str().to_owned(),
+      kind: sml_namespace::SymbolKind::Structure,
+      detail: None,
+      documentation: env.def.and_then(|d| self.get_doc(d)).map(ToOwned::to_owned),
+    }));
+    ac.extend(env.val_env.iter().map(|(name, val_info)| {
+      mvs.clear();
+      mvs.extend_for(val_info.ty_scheme.ty);
+      let ty_scheme =
+        val_info.ty_scheme.display(mvs, &self.syms_tys.syms, config::DiagnosticLines::Many);
+      CompletionItem {
+        label: name.as_str().to_owned(),
+        kind: sml_symbol_kind::get(&self.syms_tys.tys, val_info),
+        detail: Some(ty_scheme.to_string()),
+        documentation: val_info.defs.iter().filter_map(|&x| self.get_doc(x)).fold(None, |ac, x| {
+          match ac {
+            None => Some(x.to_owned()),
+            Some(mut ac) => {
+              ac.push_str("\n\n---\n\n");
+              ac.push_str(x);
+              Some(ac)
+            }
+          }
+        }),
+      }
+    }));
   }
 
   /// Returns all inlay hints for the range.
   #[must_use]
-  pub fn inlay_hints(
-    &self,
-    range: WithPath<RangeUtf16>,
-  ) -> Option<impl Iterator<Item = InlayHint> + '_> {
+  pub fn inlay_hints(&self, range: WithPath<RangeUtf16>) -> Option<Vec<InlayHint>> {
     let file = self.source_files.get(&range.path)?;
-    let ret = file.info.show_ty_annot(&self.syms_tys).filter_map(|(hint, ty_annot)| {
-      let idx = sml_hir::Idx::from(hint);
-      let ptr = file.syntax.lower.ptrs.hir_to_ast(idx)?;
-      // ignore patterns that are not from this exact source
-      if file.syntax.lower.ptrs.ast_to_hir_all(&ptr)? != [idx] {
-        return None;
+    let arenas = &file.syntax.lower.arenas;
+    let val_bind_pats = arenas
+      .dec
+      .iter()
+      .filter_map(|(_, dec)| match dec {
+        sml_hir::Dec::Val(_, val_binds, sml_hir::ValFlavor::Val) => Some(val_binds),
+        _ => None,
+      })
+      .flat_map(|xs| xs.iter().filter_map(|x| x.pat));
+    let fun_case_bodies = arenas
+      .dec
+      .iter()
+      .filter_map(|(_, dec)| match dec {
+        sml_hir::Dec::Val(_, val_binds, sml_hir::ValFlavor::Fun) => Some(val_binds),
+        _ => None,
+      })
+      .flat_map(|xs| xs.iter().filter_map(|x| x.exp))
+      .filter_map(|mut exp| {
+        let func = loop {
+          match &arenas.exp[exp] {
+            sml_hir::Exp::Fn(arms, sml_hir::FnFlavor::FunArg) => exp = arms.first()?.exp?,
+            sml_hir::Exp::App(func, _) => break (*func)?,
+            _ => unreachable!("non-(FunArg Fn) or App exp for Fun Val"),
+          }
+        };
+        let fst_arm_body = match &arenas.exp[func] {
+          sml_hir::Exp::Fn(arms, sml_hir::FnFlavor::FunCase { .. }) => arms.first()?.exp?,
+          _ => unreachable!("non-(FunCase Fn) for Fun Val App func"),
+        };
+        match &arenas.exp[fst_arm_body] {
+          sml_hir::Exp::Typed(_, _, sml_hir::TypedFlavor::Fun) => None,
+          _ => Some((exp, fst_arm_body)),
+        }
+      });
+    // need to do two iters here because the FunCase tuple case yields many pats,but the Fn and
+    // FunCase non-tuple case yield only one.
+    let fun_case_tuple_pats = arenas
+      .exp
+      .iter()
+      .filter_map(|(_, exp)| match exp {
+        sml_hir::Exp::Fn(cs, sml_hir::FnFlavor::FunCase { tuple: true }) => {
+          match &arenas.pat[cs.first()?.pat?] {
+            sml_hir::Pat::Record { rows, .. } => Some(rows.iter().filter_map(|&(_, pat)| pat)),
+            _ => unreachable!("non-Record pat for FunCase with tuple: true"),
+          }
+        }
+        _ => None,
+      })
+      .flatten();
+    let fn_and_fun_case_non_tuple_pats = arenas.exp.iter().filter_map(|(_, exp)| match exp {
+      sml_hir::Exp::Fn(cs, sml_hir::FnFlavor::Fn | sml_hir::FnFlavor::FunCase { tuple: false }) => {
+        cs.first()?.pat
       }
-      let node = ptr.to_node(file.syntax.parse.root.syntax());
-      let parent_kind = node.parent()?.kind();
-      // ignore type-annotated patterns
-      if sml_syntax::ast::TypedPat::can_cast(parent_kind) {
-        return None;
-      }
-      let range = file.syntax.pos_db.range_utf16(ptr.text_range())?;
-      Some([
-        InlayHint { position: range.start, label: "(".to_owned(), kind: InlayHintKind::Ty },
-        InlayHint { position: range.end, label: ty_annot, kind: InlayHintKind::Ty },
-      ])
+      _ => None,
     });
-    Some(ret.flatten())
+    let ty_hints = val_bind_pats.filter_map(|pat| {
+      let (range, ty_annot) = inlay_hint_pat(&self.syms_tys, file, pat)?;
+      Some(InlayHint { position: range.end, label: ty_annot, kind: InlayHintKind::Ty })
+    });
+    let param_hints = std::iter::empty()
+      .chain(fun_case_tuple_pats)
+      .chain(fn_and_fun_case_non_tuple_pats)
+      .filter_map(|pat| {
+        let (range, ty_annot) = inlay_hint_pat(&self.syms_tys, file, pat)?;
+        Some([
+          InlayHint { position: range.start, label: "(".to_owned(), kind: InlayHintKind::Param },
+          InlayHint {
+            position: range.end,
+            label: format!("{ty_annot})"),
+            kind: InlayHintKind::Param,
+          },
+        ])
+      })
+      .flatten();
+    let fun_return_ty_hints = fun_case_bodies.filter_map(|(ptr_exp, exp)| {
+      let ptr = file.syntax.lower.ptrs.hir_to_ast(ptr_exp.into())?;
+      let fun_bind_ptr = ptr.cast::<sml_syntax::ast::FunBind>()?;
+      let fun_bind = fun_bind_ptr.to_node(file.syntax.parse.root.syntax());
+      let case = fun_bind.fun_bind_cases().next()?;
+      if case.ty_annotation().is_some() {
+        return None;
+      }
+      let end = case.pats().last()?.syntax().text_range().end();
+      let position = file.syntax.pos_db.position_utf16(end)?;
+      let label = file.info.show_ty_annot(&self.syms_tys, exp)?;
+      Some(InlayHint { position, label, kind: InlayHintKind::Ty })
+    });
+    let hints = std::iter::empty().chain(param_hints).chain(ty_hints).chain(fun_return_ty_hints);
+    Some(hints.collect())
   }
+}
+
+fn inlay_hint_pat(
+  st: &sml_statics_types::St,
+  file: &mlb_statics::SourceFile,
+  pat: sml_hir::la_arena::Idx<sml_hir::Pat>,
+) -> Option<(RangeUtf16, String)> {
+  let want = match &file.syntax.lower.arenas.pat[pat] {
+    sml_hir::Pat::Typed(_, _) => false,
+    sml_hir::Pat::Record { rows, allows_other } => rows.len() > 1 || *allows_other,
+    _ => true,
+  };
+  if !want {
+    return None;
+  }
+  let ty_annot = file.info.show_pat_ty_annot(st, pat)?;
+  let ptr = file.syntax.lower.ptrs.hir_to_ast(pat.into())?;
+  let range = file.syntax.pos_db.range_utf16(ptr.text_range())?;
+  Some((range, ty_annot))
 }
 
 /// An error when formatting a file.
@@ -453,4 +581,27 @@ pub enum InlayHintKind {
   Param,
   /// A type.
   Ty,
+}
+
+/// A completion item.
+#[derive(Debug)]
+pub struct CompletionItem {
+  /// The label.
+  pub label: String,
+  /// The kind.
+  pub kind: sml_namespace::SymbolKind,
+  /// Detail about it.
+  pub detail: Option<String>,
+  /// Markdown documentation for it.
+  pub documentation: Option<String>,
+}
+
+fn get_env<'e>(mut env: &'e Env, path: &sml_syntax::ast::Path) -> Option<&'e Env> {
+  for name in path.name_star_eq_dots() {
+    // NOTE: assumes that a NameStarEqDot's first token is the name
+    let tok = name.syntax().first_token()?;
+    let name = tok.text();
+    env = env.str_env.get(name)?;
+  }
+  Some(env)
 }

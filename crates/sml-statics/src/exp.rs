@@ -1,6 +1,5 @@
 //! Checking expressions.
 
-use crate::env::{Cx, Env};
 use crate::error::{AppendArg, ErrorKind};
 use crate::get_env::{get_env_raw, get_val_info};
 use crate::info::TyEntry;
@@ -8,13 +7,14 @@ use crate::util::record;
 use crate::{config::Cfg, pat_match::Pat};
 use crate::{dec, pat, st::St, ty, unify::unify};
 use fast_hash::FxHashSet;
+use sml_statics_types::env::{Cx, Env};
 use sml_statics_types::sym::{Sym, SymsMarker};
 use sml_statics_types::ty::{Generalizable, Ty, TyData, TyScheme, Tys};
 use sml_statics_types::util::{get_scon, instantiate};
 use sml_statics_types::{def, info::ValEnv, item::Item, mode::Mode};
 
 pub(crate) fn get_and_check_ty_escape(
-  st: &mut St,
+  st: &mut St<'_>,
   cfg: Cfg,
   cx: &Cx,
   marker: SymsMarker,
@@ -28,7 +28,7 @@ pub(crate) fn get_and_check_ty_escape(
   ret
 }
 
-fn get(st: &mut St, cfg: Cfg, cx: &Cx, ars: &sml_hir::Arenas, exp: sml_hir::ExpIdx) -> Ty {
+fn get(st: &mut St<'_>, cfg: Cfg, cx: &Cx, ars: &sml_hir::Arenas, exp: sml_hir::ExpIdx) -> Ty {
   let exp = match exp {
     Some(x) => x,
     None => return Ty::NONE,
@@ -143,7 +143,7 @@ fn get(st: &mut St, cfg: Cfg, cx: &Cx, ars: &sml_hir::Arenas, exp: sml_hir::ExpI
       st.syms_tys.tys.fun(param, res)
     }
     // @def(9)
-    sml_hir::Exp::Typed(inner, want) => {
+    sml_hir::Exp::Typed(inner, want, _) => {
       let got = get(st, cfg, cx, ars, *inner);
       let want = ty::get(st, cx, ars, ty::Mode::Regular, *want);
       unify(st, exp.into(), want, got);
@@ -268,7 +268,7 @@ pub(crate) fn maybe_effectful(ars: &sml_hir::Arenas, exp: sml_hir::ExpIdx) -> bo
   match &ars.exp[exp] {
     sml_hir::Exp::SCon(_) | sml_hir::Exp::Path(_) | sml_hir::Exp::Fn(_, _) => false,
     sml_hir::Exp::Record(rows) => rows.iter().any(|&(_, exp)| maybe_effectful(ars, exp)),
-    sml_hir::Exp::Typed(exp, _) => maybe_effectful(ars, *exp),
+    sml_hir::Exp::Typed(exp, _, _) => maybe_effectful(ars, *exp),
     sml_hir::Exp::Let(dec, exp) => dec::maybe_effectful(ars, dec) || maybe_effectful(ars, *exp),
     sml_hir::Exp::Hole
     | sml_hir::Exp::App(_, _)
@@ -279,7 +279,7 @@ pub(crate) fn maybe_effectful(ars: &sml_hir::Arenas, exp: sml_hir::ExpIdx) -> bo
 
 /// @def(13)
 fn get_matcher(
-  st: &mut St,
+  st: &mut St<'_>,
   idx: sml_hir::Idx,
   cfg: Cfg,
   cx: &Cx,

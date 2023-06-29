@@ -30,7 +30,7 @@ language.exp.while = false
   let sml = r#"
 val _ = 4
 val _ = while true do ()
-(**     ^^^^^^^^^^^^^^^^ disallowed expression: while *)
+(**     ^^^^^^^^^^^^^^^^ disallowed expression: `while` *)
 val _ = "hi"
 "#;
   check_multi(singleton(config, sml));
@@ -45,7 +45,7 @@ language.dec.signature = false
   let sml = r#"
 structure Str = struct end
 signature SIG = sig end
-(** + disallowed declaration: signature *)
+(** + disallowed declaration: `signature` *)
 functor F() = struct end
 "#;
   check_multi(singleton(config, sml));
@@ -60,7 +60,7 @@ version = 1
 "#;
   let sml = r#"
 val tab = List.tabulate
-(**       ^^^^^^^^^^^^^ disallowed *)
+(**       ^^^^^^^^^^^^^ disallowed value: `tabulate` *)
 "#;
   multi_std_basis(raw::Outcome::Pass, singleton(config, sml));
 }
@@ -77,7 +77,7 @@ local
   open List
 in
   val tab = tabulate
-(**         ^^^^^^^^ disallowed *)
+(**         ^^^^^^^^ disallowed value: `tabulate` *)
 end
 "#;
   multi_std_basis(raw::Outcome::Pass, singleton(config, sml));
@@ -133,7 +133,7 @@ version = 1
 "#;
   let sml = r#"
 val h = hd
-(**     ^^ disallowed *)
+(**     ^^ disallowed value: `hd` *)
 "#;
   multi_std_basis(raw::Outcome::Fail, singleton(config, sml));
 }
@@ -147,10 +147,17 @@ version = 1
 "#;
   let sml = r#"
 val h = List.hd
-(**     ^^^^^^^ disallowed *)
+(**     ^^^^^^^ disallowed value: `hd` *)
 "#;
   multi_std_basis(raw::Outcome::Fail, singleton(config, sml));
 }
+
+const LIST_SHADOW: &str = r#"
+structure List = struct
+  val hd = 3
+end
+val n = List.hd + 4
+"#;
 
 #[test]
 fn shadow_fqn() {
@@ -159,13 +166,7 @@ version = 1
 [language.val]
 "List.hd" = false
 "#;
-  let sml = r#"
-structure List = struct
-  val hd = 3
-end
-val n = List.hd + 4
-"#;
-  multi_std_basis(raw::Outcome::Pass, singleton(config, sml));
+  multi_std_basis(raw::Outcome::Pass, singleton(config, LIST_SHADOW));
 }
 
 #[test]
@@ -201,4 +202,65 @@ val n = List.hd + 4
     raw::Outcome::Pass,
     [(config::file::PATH, config), ("s.mlb", "a.sml b.sml"), ("a.sml", a), ("b.sml", b)],
   );
+}
+
+fn no_list(sml: &str) {
+  let config = r#"
+version = 1
+[language.structure]
+"List" = false
+"#;
+  multi_std_basis(raw::Outcome::Pass, singleton(config, sml));
+}
+
+#[test]
+fn str_smoke() {
+  let sml = r#"
+structure L = List
+(**           ^^^^ disallowed structure: `List` *)
+"#;
+  no_list(sml);
+}
+
+#[test]
+fn str_val() {
+  let sml = r#"
+val tab = List.tabulate
+(**       ^^^^^^^^^^^^^ disallowed structure: `List` *)
+"#;
+  no_list(sml);
+}
+
+#[test]
+fn str_open() {
+  let sml = r#"
+structure S = struct
+  open List
+(**  + disallowed structure: `List` *)
+end
+"#;
+  no_list(sml);
+}
+
+#[test]
+fn str_type() {
+  let sml = r#"
+type 'a seq = 'a List.list
+(**           ^^^^^^^^^^^^ disallowed structure: `List` *)
+"#;
+  no_list(sml);
+}
+
+#[test]
+fn str_exn() {
+  let sml = r#"
+exception Sub = List.Subscript
+(** + disallowed structure: `List` *)
+"#;
+  no_list(sml);
+}
+
+#[test]
+fn str_shadow() {
+  no_list(LIST_SHADOW);
 }

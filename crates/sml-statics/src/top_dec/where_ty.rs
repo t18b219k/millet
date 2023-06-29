@@ -1,16 +1,15 @@
 //! Dealing with `where` and `where type`.
 
-use crate::env::Env;
 use crate::top_dec::{realize, ty_con_paths};
 use crate::{
   basis::Bs, dec::add_fixed_ty_vars, error::ErrorKind, get_env::get_ty_info, st::St, ty,
 };
-use sml_statics_types::generalize::generalize_fixed;
-use sml_statics_types::sym::SymsMarker;
+use sml_statics_types::env::Env;
 use sml_statics_types::ty::{TyData, TyScheme, TyVarSrc};
+use sml_statics_types::{generalize, sym::SymsMarker};
 
 pub(crate) fn get(
-  st: &mut St,
+  st: &mut St<'_>,
   idx: sml_hir::Idx,
   bs: &Bs,
   marker: SymsMarker,
@@ -23,7 +22,7 @@ pub(crate) fn get(
       let mut cx = bs.as_cx();
       let fixed = add_fixed_ty_vars(st, idx, &mut cx, TyVarSrc::Ty, ty_vars);
       let ty = ty::get(st, &cx, ars, ty::Mode::TyRhs, *ty);
-      let ty_scheme = generalize_fixed(&mut st.syms_tys.tys, fixed, ty);
+      let ty_scheme = generalize::get_fixed(&mut st.syms_tys.tys, fixed, ty);
       get_where_type(st, idx, marker, inner_env, path, ty_scheme, true);
     }
     sml_hir::WhereKind::Structure(lhs, rhs) => {
@@ -74,7 +73,7 @@ pub(crate) fn get(
 /// HACK: we allow intentionally ignoring cannot realize ty errors. I'm not exactly sure of the
 /// semantics of `where S = T` but this silences some errors seen in valid NJ-flavored SML.
 fn get_where_type(
-  st: &mut St,
+  st: &mut St<'_>,
   idx: sml_hir::Idx,
   marker: SymsMarker,
   inner_env: &mut Env,
@@ -109,14 +108,14 @@ fn get_where_type(
         subst.insert(data.sym, ty_scheme);
         realize::get_env(&mut st.syms_tys.tys, &subst, inner_env);
       } else {
-        // @test(sig::impossible)
+        cov_mark::hit("where_con_not_gen_after");
         if emit_cannot_realize {
           st.err(idx, ErrorKind::CannotRealizeTy(path.clone(), path_ty_scheme.clone()));
         }
       }
     }
-    // @test(sig::where_not_con)
     _ => {
+      cov_mark::hit("where_not_con");
       if emit_cannot_realize {
         st.err(idx, ErrorKind::CannotRealizeTy(path.clone(), path_ty_scheme.clone()));
       }

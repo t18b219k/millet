@@ -1,19 +1,18 @@
 //! Checking declarations.
 
-use crate::env::{Cx, Env};
 use crate::error::ErrorKind;
 use crate::get_env::{get_env, get_env_raw, get_ty_info, get_val_info};
-use crate::util::{ins_check_name, ins_no_dupe};
+use crate::util::{check_name, ins_check_name, ins_no_dupe};
 use crate::{config::Cfg, exp, pat, pat_match::Pat, st::St, ty, unify::unify};
 use fast_hash::{FxHashMap, FxHashSet};
-use sml_statics_types::generalize::{generalize, generalize_fixed, FixedTyVars};
+use sml_statics_types::env::{Cx, Env};
 use sml_statics_types::info::{IdStatus, TyEnv, TyInfo, ValEnv, ValInfo};
-use sml_statics_types::sym::{Equality, StartedSym};
+use sml_statics_types::sym::{Equality, StartedSym, SymValEnv};
 use sml_statics_types::ty::{Generalizable, Ty, TyData, TyScheme, TyVarSrc};
-use sml_statics_types::{equality, item::Item};
+use sml_statics_types::{equality, generalize, item::Item};
 
 pub(crate) fn get(
-  st: &mut St,
+  st: &mut St<'_>,
   cfg: Cfg,
   cx: &Cx,
   ars: &sml_hir::Arenas,
@@ -39,7 +38,7 @@ pub(crate) fn get(
 }
 
 fn get_one(
-  st: &mut St,
+  st: &mut St<'_>,
   cfg: Cfg,
   cx: &Cx,
   ars: &sml_hir::Arenas,
@@ -48,7 +47,7 @@ fn get_one(
 ) {
   match &ars.dec[dec] {
     // @def(15)
-    sml_hir::Dec::Val(ty_vars, val_binds) => {
+    sml_hir::Dec::Val(ty_vars, val_binds, _) => {
       if !maybe_effectful_val(ars, val_binds) {
         st.err(dec, ErrorKind::DecWithoutEffect);
       }
@@ -112,7 +111,7 @@ fn get_one(
         if !generalized.insert(exp) {
           continue;
         }
-        match generalize(&mut st.syms_tys.tys, fixed.clone(), val_info.ty_scheme.ty) {
+        match generalize::get(&mut st.syms_tys.tys, fixed.clone(), val_info.ty_scheme.ty) {
           Ok(ts) => val_info.ty_scheme = ts,
           Err(ur) => st.err(ur.idx, ErrorKind::UnresolvedRecordTy(ur.rows)),
         }
@@ -239,7 +238,7 @@ fn get_one(
 }
 
 fn get_pat_and_src_exp(
-  st: &mut St,
+  st: &mut St<'_>,
   cfg: pat::Cfg,
   cx: &Cx,
   ars: &sml_hir::Arenas,
@@ -262,13 +261,13 @@ fn get_pat_and_src_exp(
 }
 
 pub(crate) fn add_fixed_ty_vars(
-  st: &mut St,
+  st: &mut St<'_>,
   idx: sml_hir::Idx,
   cx: &mut Cx,
   src: TyVarSrc,
   ty_vars: &[sml_hir::TyVar],
-) -> FixedTyVars {
-  let mut ret = FixedTyVars::default();
+) -> generalize::FixedTyVars {
+  let mut ret = generalize::FixedTyVars::default();
   for ty_var in ty_vars.iter() {
     let fv = st.syms_tys.tys.fixed_var(ty_var.clone(), src);
     if cx.fixed.insert(ty_var.clone(), fv).is_some() {
@@ -281,7 +280,7 @@ pub(crate) fn add_fixed_ty_vars(
 }
 
 fn get_ty_binds(
-  st: &mut St,
+  st: &mut St<'_>,
   idx: sml_hir::Idx,
   cx: &mut Cx,
   ars: &sml_hir::Arenas,
@@ -291,7 +290,7 @@ fn get_ty_binds(
   for ty_bind in ty_binds {
     let fixed = add_fixed_ty_vars(st, idx, cx, TyVarSrc::Ty, &ty_bind.ty_vars);
     let ty = ty::get(st, cx, ars, ty::Mode::TyRhs, ty_bind.ty);
-    let ty_scheme = generalize_fixed(&mut st.syms_tys.tys, fixed, ty);
+    let ty_scheme = generalize::get_fixed(&mut st.syms_tys.tys, fixed, ty);
     let ty_info =
       TyInfo { ty_scheme, val_env: ValEnv::default(), def: st.def(idx), disallow: None };
     if let Some(e) = ins_no_dupe(ty_env, ty_bind.name.clone(), ty_info, Item::Ty) {
@@ -305,13 +304,13 @@ fn get_ty_binds(
 
 struct Datatype {
   started: StartedSym,
-  fixed: FixedTyVars,
+  fixed: generalize::FixedTyVars,
   out_ty: Ty,
   ty_scheme: TyScheme,
 }
 
 pub(crate) fn get_dat_binds(
-  st: &mut St,
+  st: &mut St<'_>,
   idx: sml_hir::Idx,
   mut cx: Cx,
   ars: &sml_hir::Arenas,
@@ -327,15 +326,15 @@ pub(crate) fn get_dat_binds(
   for dat_bind in dat_binds.iter() {
     let started = st.syms_tys.syms.start(st.mk_path(dat_bind.name.clone()));
     // just create the fixed ty vars, do not bring them into the scope of the cx yet.
-    let mut fixed = FixedTyVars::default();
+    let mut fixed = generalize::FixedTyVars::default();
     for ty_var in &dat_bind.ty_vars {
       let fv = st.syms_tys.tys.fixed_var(ty_var.clone(), TyVarSrc::Ty);
       fixed.push(fv);
     }
     let out_args: Vec<_> = fixed.iter().collect();
     let out_ty = st.syms_tys.tys.con(out_args, started.sym());
-    // just `generalize` would also work, because `out_ty` mentions every fixed var.
-    let ty_scheme = generalize_fixed(&mut st.syms_tys.tys, fixed.clone(), out_ty);
+    // just `get` would also work, because `out_ty` mentions every fixed var.
+    let ty_scheme = generalize::get_fixed(&mut st.syms_tys.tys, fixed.clone(), out_ty);
     let ty_info = TyInfo {
       ty_scheme: ty_scheme.clone(),
       val_env: ValEnv::default(),
@@ -380,7 +379,7 @@ pub(crate) fn get_dat_binds(
         st.err(idx, e);
       }
     }
-    let mut val_env = ValEnv::default();
+    let mut val_env = SymValEnv::default();
     // @def(29), @def(82)
     for con_bind in &dat_bind.cons {
       let mut ty = datatype.out_ty;
@@ -388,31 +387,40 @@ pub(crate) fn get_dat_binds(
         let param = ty::get(st, &cx, ars, ty::Mode::TyRhs, of_ty);
         ty = st.syms_tys.tys.fun(param, ty);
       };
-      // just `generalize` would also work, because `ty_scheme` contains `out_ty`, which mentions
-      // every fixed var.
-      let ty_scheme = generalize_fixed(&mut st.syms_tys.tys, datatype.fixed.clone(), ty);
+      // just `get` would also work, because `ty_scheme` contains `out_ty`, which mentions every
+      // fixed var.
+      let ty_scheme = generalize::get_fixed(&mut st.syms_tys.tys, datatype.fixed.clone(), ty);
       let vi = ValInfo {
         ty_scheme,
         id_status: IdStatus::Con,
         defs: st.def(idx).into_iter().collect(),
         disallow: None,
       };
-      if let Some(e) = ins_check_name(&mut val_env, con_bind.name.clone(), vi, Item::Val) {
+      let e = check_name(&con_bind.name).or_else(|| {
+        (!val_env.insert(con_bind.name.clone(), vi))
+          .then(|| ErrorKind::Duplicate(Item::Val, con_bind.name.clone()))
+      });
+      if let Some(e) = e {
         st.err(idx, e);
       }
     }
     // NOTE: no checking for duplicates here
-    big_val_env.append(&mut val_env.clone());
+    big_val_env.append(&mut val_env.clone().into());
     let ty_info =
       TyInfo { ty_scheme: datatype.ty_scheme, val_env, def: st.def(idx), disallow: None };
-    let equality =
-      equality::get_ty_info(st.info.mode, &st.syms_tys.syms, &mut st.syms_tys.tys, ty_info.clone());
+    let ty_info_dve = ty_info.clone().with_default_val_env();
+    let equality = equality::get_ty_info(
+      st.info.mode,
+      &st.syms_tys.syms,
+      &mut st.syms_tys.tys,
+      ty_info_dve.clone(),
+    );
     let equality = match equality {
       Ok(()) => Equality::Sometimes,
       Err(_) => Equality::Never,
     };
-    st.syms_tys.syms.finish(datatype.started, ty_info.clone(), equality);
-    ty_env.insert(dat_bind.name.clone(), ty_info);
+    st.syms_tys.syms.finish(datatype.started, ty_info, equality);
+    ty_env.insert(dat_bind.name.clone(), ty_info_dve);
     for ty_var in &dat_bind.ty_vars {
       cx.fixed.remove(ty_var);
     }
@@ -434,7 +442,7 @@ fn expansive(cx: &Cx, ars: &sml_hir::Arenas, exp: sml_hir::ExpIdx) -> bool {
     sml_hir::Exp::App(func, argument) => {
       !constructor(cx, ars, *func) || expansive(cx, ars, *argument)
     }
-    sml_hir::Exp::Typed(exp, _) => expansive(cx, ars, *exp),
+    sml_hir::Exp::Typed(exp, _, _) => expansive(cx, ars, *exp),
   }
 }
 
@@ -454,7 +462,7 @@ fn constructor(cx: &Cx, ars: &sml_hir::Arenas, exp: sml_hir::ExpIdx) -> bool {
     | sml_hir::Exp::Raise(_)
     | sml_hir::Exp::Fn(_, _) => false,
     sml_hir::Exp::Record(rows) => rows.iter().any(|&(_, exp)| constructor(cx, ars, exp)),
-    sml_hir::Exp::Typed(exp, _) => constructor(cx, ars, *exp),
+    sml_hir::Exp::Typed(exp, _, _) => constructor(cx, ars, *exp),
     sml_hir::Exp::Path(path) => {
       if path.prefix().is_empty() && path.last().as_str() == "ref" {
         return false;
@@ -472,7 +480,7 @@ pub(crate) fn maybe_effectful(ars: &sml_hir::Arenas, decs: &[sml_hir::DecIdx]) -
 
 pub(crate) fn maybe_effectful_one(ars: &sml_hir::Arenas, dec: sml_hir::DecIdx) -> bool {
   match &ars.dec[dec] {
-    sml_hir::Dec::Val(_, val_binds) => maybe_effectful_val(ars, val_binds),
+    sml_hir::Dec::Val(_, val_binds, _) => maybe_effectful_val(ars, val_binds),
     sml_hir::Dec::Ty(_)
     | sml_hir::Dec::Datatype(_, _)
     | sml_hir::Dec::DatatypeCopy(_, _)
@@ -504,6 +512,6 @@ fn maybe_fn(ar: &sml_hir::ExpArena, exp: sml_hir::ExpIdx) -> bool {
     | sml_hir::Exp::App(_, _)
     | sml_hir::Exp::Handle(_, _)
     | sml_hir::Exp::Raise(_) => false,
-    sml_hir::Exp::Typed(exp, _) => maybe_fn(ar, *exp),
+    sml_hir::Exp::Typed(exp, _, _) => maybe_fn(ar, *exp),
   }
 }

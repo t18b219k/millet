@@ -10,5 +10,6 @@ test = false
 doctest = false
 
 [dependencies]
-fast-hash = { git = "https://github.com/azdavis/language-util.git" }
-sml-hir = { path = "../sml-hir" }
+fast-hash.workspace = true
+
+sml-hir.path = "../sml-hir"

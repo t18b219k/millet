@@ -18,12 +18,12 @@ pub(crate) fn init(init: lsp_types::InitializeParams, sender: Sender<Message>) -
       }
     })
     .unwrap_or_default();
-  let analysis = analysis::Analysis::new(
-    analysis::StdBasis::full(),
-    config::ErrorLines::Many,
-    options.diagnostics.ignore,
-    options.format,
-  );
+  let analysis_options = analysis::Options {
+    lines: config::DiagnosticLines::Many,
+    ignore: options.diagnostics.ignore,
+    format: options.format,
+  };
+  let analysis = analysis::Analysis::new(analysis::StdBasis::full(), analysis_options);
   let mut cx = Cx {
     options,
     registered_for_watched_files: false,
@@ -43,7 +43,7 @@ pub(crate) fn init(init: lsp_types::InitializeParams, sender: Sender<Message>) -
         let input = cx.get_input(&path);
         Mode::Root(Box::new(Root { path, input }))
       }
-      None => Mode::NoRoot(paths::PathMap::default()),
+      None => Mode::NoRoot,
     },
     cx,
     analysis,
@@ -52,12 +52,13 @@ pub(crate) fn init(init: lsp_types::InitializeParams, sender: Sender<Message>) -
   if let Err((e, url)) = root {
     ret.cx.show_error(format!("cannot initialize workspace root {url}: {e:#}"), Code::n(1018));
   }
-  let dynamic_registration = init
-    .capabilities
-    .workspace
-    .and_then(|x| x.file_operations?.dynamic_registration)
-    .unwrap_or_default();
-  if dynamic_registration {
+  let want_file_ops = ret.cx.options.fs_watcher.0
+    && init
+      .capabilities
+      .workspace
+      .and_then(|x| x.file_operations?.dynamic_registration)
+      .unwrap_or_default();
+  if want_file_ops {
     if let Mode::Root(root) = &ret.mode {
       // we'd like to only listen to millet.toml, not all toml, but "nested alternate groups are
       // not allowed" at time of writing.

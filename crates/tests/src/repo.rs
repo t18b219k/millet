@@ -52,6 +52,19 @@ fn output(c: &mut Command) -> String {
   String::from_utf8(out.stdout).unwrap()
 }
 
+fn empty_git_grep(patterns: &[&str], msg: &str) {
+  let mut cmd = root_cmd("git");
+  cmd.args(["grep", "-Fn"]);
+  for pattern in patterns {
+    cmd.args(["-e", pattern]);
+  }
+  let out = cmd.output().unwrap();
+  assert!(out.stderr.is_empty());
+  let out = String::from_utf8(out.stdout).unwrap();
+  let lines: Vec<_> = out.lines().collect();
+  assert!(lines.is_empty(), "{msg}: {lines:#?}");
+}
+
 #[test]
 fn sml_def() {
   let got: BTreeSet<u16> =
@@ -87,11 +100,12 @@ fn sync() {
 #[test]
 fn test_refs() {
   let mut cmd = root_cmd("git");
-  let out = output(cmd.args(["grep", "-hoE", "@test\\(([a-z0-9_:]+)\\)"]));
+  let out = output(cmd.args(["grep", "-hoE", "@test\\(([^)]+)\\)"]));
+  let split = "@TEST(".to_ascii_lowercase();
   let referenced: BTreeSet<_> = out
     .lines()
     .filter_map(|line| {
-      let (_, inner) = line.split_once("@test(")?;
+      let (_, inner) = line.split_once(split.as_str())?;
       let (name, _) = inner.split_once(')')?;
       Some(name)
     })
@@ -105,11 +119,7 @@ fn test_refs() {
 
 fn attr_test(word: &str) {
   let word_attr = format!("#[{word}");
-  let mut cmd = root_cmd("git");
-  cmd.args(["grep", "-Fne", word_attr.as_str()]);
-  let out = String::from_utf8(cmd.output().unwrap().stdout).unwrap();
-  let set: BTreeSet<_> = out.lines().collect();
-  empty_set(&set, format!("files with {word} attribute").as_str());
+  empty_git_grep(&[word_attr.as_str()], format!("files with {word} attribute").as_str());
 }
 
 #[test]
@@ -184,12 +194,7 @@ fn no_debugging() {
   let fst = "DBG".to_ascii_lowercase();
   let snd = "EPRINT".to_ascii_lowercase();
   let thd = "CONSOLE.LOG".to_ascii_lowercase();
-  // ignore status because if no results (which is desired), git grep returns non-zero.
-  let mut cmd = root_cmd("git");
-  cmd.args(["grep", "-Fne", fst.as_str(), snd.as_str(), thd.as_str()]);
-  let out = String::from_utf8(cmd.output().unwrap().stdout).unwrap();
-  let got: BTreeSet<_> = out.lines().collect();
-  empty_set(&got, "not allowed to have debugging");
+  empty_git_grep(&[fst.as_str(), snd.as_str(), thd.as_str()], "files with debugging");
 }
 
 #[test]
@@ -223,6 +228,7 @@ fn licenses() {
     "Apache-2.0 OR BSL-1.0",
     "Apache-2.0 OR MIT",
     "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+    "Apache-2.0",
     "Apache-2.0/MIT",
     "MIT OR Apache-2.0 OR Zlib",
     "MIT OR Apache-2.0",
@@ -430,7 +436,7 @@ fn node_version() {
   let mut split = readme_table_line.split_ascii_whitespace();
   assert_eq!(split.next().unwrap(), "|");
   assert_eq!(split.next().unwrap(), version);
-  let ci = include_str!("../../../.github/workflows/ci.yaml");
+  let ci = include_str!("../../../.github/workflows/ci.yml");
   let ci_version = ci
     .lines()
     .filter_map(|line| {
@@ -459,11 +465,7 @@ fn rs_file_comments() {
 #[test]
 fn primitives() {
   let mut lines = include_str!("../../../crates/sml-statics-types/src/def.rs").lines();
-  for line in lines.by_ref() {
-    if line.trim() == "// @primitives(start)" {
-      break;
-    }
-  }
+  lines.by_ref().find(|line| line.trim() == "// @primitives(start)").unwrap();
   let mut in_rs = Vec::<&str>::new();
   for line in lines {
     let line = line.trim();
@@ -547,5 +549,52 @@ fn version() {
 
   if let Some(github_ref_v) = option_env!("GITHUB_REF_NAME").and_then(|r| r.strip_prefix('v')) {
     assert_eq!(pkg_json_ver, github_ref_v);
+  }
+}
+
+#[test]
+fn cargo_toml() {
+  for entry in std::fs::read_dir(root_dir().join("crates")).unwrap() {
+    let entry = entry.unwrap();
+    let mut path = entry.path();
+    path.push("Cargo.toml");
+    let contents = std::fs::read_to_string(&path).unwrap();
+    let mut lines = contents.lines();
+    if !lines.by_ref().any(|line| matches!(line, "[dependencies]" | "[dev-dependencies]")) {
+      continue;
+    }
+    let mut workspace = true;
+    let mut ps = Vec::<&str>::new();
+    for line in lines {
+      if line.starts_with('[') || line.ends_with("# @ignore") {
+        break;
+      }
+      if line.is_empty() {
+        workspace = false;
+        continue;
+      }
+      let (lhs, rhs) = line.split_once(" = ").unwrap();
+      let (pkg, dot_what) = lhs.split_once('.').unwrap();
+      match dot_what {
+        "path" => {
+          let mut ps_sorted = ps.clone();
+          ps_sorted.sort_unstable();
+          assert_eq!(ps, ps_sorted);
+          ps.clear();
+          workspace = false;
+          let basename = rhs.strip_prefix("\"../").unwrap().strip_suffix('\"').unwrap();
+          assert_eq!(pkg, basename);
+        }
+        "workspace" => {
+          assert!(workspace);
+          assert_eq!(rhs, "true");
+        }
+        _ => unreachable!("unknown dot_what: {dot_what}"),
+      }
+      ps.push(pkg);
+    }
+    let mut ps_sorted = ps.clone();
+    ps_sorted.sort_unstable();
+    assert_eq!(ps, ps_sorted);
   }
 }

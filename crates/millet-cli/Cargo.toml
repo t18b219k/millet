@@ -10,12 +10,16 @@ name = "millet-cli"
 test = false
 
 [dependencies]
-analysis = { path = "../analysis" }
-sml-naive-fmt = { path = "../sml-naive-fmt" }
-config = { path = "../config" }
-diagnostic = { git = "https://github.com/azdavis/language-util.git" }
-env_logger = "0.10"
-input = { path = "../input" }
-panic-hook = { path = "../panic-hook" }
-paths = { git = "https://github.com/azdavis/language-util.git" }
-pico-args = "0.5"
+codespan-reporting.workspace = true
+diagnostic.workspace = true
+env_logger.workspace = true
+paths.workspace = true
+pico-args.workspace = true
+text-pos.workspace = true
+text-size-util.workspace = true
+
+analysis.path = "../analysis"
+config.path = "../config"
+input.path = "../input"
+panic-hook.path = "../panic-hook"
+sml-naive-fmt.path = "../sml-naive-fmt"

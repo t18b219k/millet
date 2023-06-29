@@ -9,12 +9,14 @@ publish.workspace = true
 doctest = false
 
 [dev-dependencies]
-sml-file-syntax = { path = "../sml-file-syntax" }
-sml-statics = { path = "../sml-statics" }
-sml-statics-types = { path = "../sml-statics-types" }
-sml-fixity = { path = "../sml-fixity" }
-sml-hir = { path = "../sml-hir" }
-sml-path = { path = "../sml-path" }
-config = { path = "../config" }
-sml-dynamics = { path = "../sml-dynamics" }
-str-util = { git = "https://github.com/azdavis/language-util.git" }
+pretty_assertions.workspace = true
+str-util.workspace = true
+
+config.path = "../config"
+sml-dynamics.path = "../sml-dynamics"
+sml-file-syntax.path = "../sml-file-syntax"
+sml-fixity.path = "../sml-fixity"
+sml-hir.path = "../sml-hir"
+sml-path.path = "../sml-path"
+sml-statics-types.path = "../sml-statics-types"
+sml-statics.path = "../sml-statics"

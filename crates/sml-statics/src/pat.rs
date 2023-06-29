@@ -4,14 +4,14 @@ use crate::info::TyEntry;
 use crate::pat_match::{Con, Pat, VariantName};
 use crate::util::{ins_check_name, record};
 use crate::{
-  compatible::eq_ty_scheme, config, env::Cx, error::ErrorKind, get_env::get_val_info, st::St, ty,
+  compatible::eq_ty_scheme, config, error::ErrorKind, get_env::get_val_info, st::St, ty,
   unify::unify,
 };
 use fast_hash::FxHashSet;
 use sml_statics_types::info::{IdStatus, ValEnv, ValInfo};
 use sml_statics_types::ty::{Generalizable, Ty, TyData, TyScheme};
 use sml_statics_types::util::{get_scon, instantiate};
-use sml_statics_types::{def, item::Item, mode::Mode};
+use sml_statics_types::{def, env::Cx, item::Item, mode::Mode};
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Copy)]
@@ -22,7 +22,7 @@ pub(crate) struct Cfg {
 }
 
 pub(crate) fn get(
-  st: &mut St,
+  st: &mut St<'_>,
   cfg: Cfg,
   ars: &sml_hir::Arenas,
   cx: &Cx,
@@ -57,7 +57,7 @@ struct PatRet {
 }
 
 fn get_(
-  st: &mut St,
+  st: &mut St<'_>,
   cfg: Cfg,
   ars: &sml_hir::Arenas,
   cx: &Cx,
@@ -91,14 +91,13 @@ fn get_(
       for e in val_info.disallow {
         st.err(pat_idx, e.into());
       }
-      // @test(deviations::mlton::rebind_ctor)
+      cov_mark::hit("rebind_ctor");
       let is_var = argument.is_none()
         && path.prefix().is_empty()
         && (ok_val_info(val_info.val.as_ref().ok().copied()) || cfg.rec);
       // @def(34)
       if is_var {
         let ty = st.syms_tys.tys.meta_var(cfg.gen);
-        defs.extend(st.def(pat_idx.into()));
         insert_name(st, pat_idx.into(), cfg.cfg, ve, path.last().clone(), ty);
         // a little WET with ok_val_info
         if let Mode::Dynamics = st.info.mode {
@@ -143,15 +142,23 @@ fn get_(
             bound_vars: val_info.ty_scheme.bound_vars.clone(),
             ty: match st.syms_tys.tys.data(val_info.ty_scheme.ty) {
               TyData::Fn(data) => data.res,
-              // @test(pat::weird_pat_fn_1)
-              _ => return None,
+              _ => {
+                // NOTE: @test(pat::weird_pat_fn_1) was supposed to exercise this code path, but
+                // after adding `cov_mark` it became clear that the test does not actually exercise
+                // this code path. changing this `return None` to an unreachable!() currently passes
+                // all tests. would be good to find and add a cov mark for a test that actually hits
+                // this path.
+                return None;
+              }
             },
           });
           defs.extend(val_info.defs.iter().copied());
           let sym = match st.syms_tys.tys.data(data.res) {
             TyData::Con(data) => data.sym,
-            // @test(pat::weird_pat_fn_2)
-            _ => return None,
+            _ => {
+              cov_mark::hit("weird_pat_fn_2");
+              return None;
+            }
           };
           let arg_pat = match argument {
             None => {
@@ -249,7 +256,7 @@ fn ok_val_info(vi: Option<&ValInfo>) -> bool {
 }
 
 fn insert_name(
-  st: &mut St,
+  st: &mut St<'_>,
   idx: sml_hir::Idx,
   cfg: config::Cfg,
   ve: &mut ValEnv,

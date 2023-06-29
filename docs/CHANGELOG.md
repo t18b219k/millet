@@ -13,6 +13,72 @@ The versioning system is basically the following:
   - If there's a really "big" change.
 - As mentioned, the "major" version is 0.
 
+## v0.12.1
+
+- Add suggestions for boolean operators.
+- Show inlay hints on literal patterns.
+- Show function return type inlay hints.
+- Fix primitive documentation references.
+
+## v0.12.0
+
+- Improve completions and hover for info when using fixity across files.
+- Show type annotation inlay hints.
+
+## v0.11.4
+
+- Improve hover for doc on various declarations.
+- Show big curried function types across multiple lines in some cases.
+- Show big record types across multiple lines in more cases.
+- Highlight `array` and `vector` as unqualified, built-in types.
+- Improve `Array`, `Vector`, and `Substring` docs.
+
+## v0.11.3
+
+- Show big record types across multiple lines in some cases.
+
+## v0.11.2
+
+- Improve range and examples for wrong number of patterns error.
+- Report qualified type names with the structure instead of signature.
+- Report array and vector types unqualified.
+
+## v0.11.1
+
+- Show doc comments when changing a file.
+- Show doc comments on built-in structures.
+- Improve completions when the cursor is at the end of the file.
+
+## v0.11.0
+
+- Improve error range for TOML parse errors.
+- Do not analyze individual SML files when not open on a folder.
+- Show more accurate hover info, etc after changing a file.
+- Add support for completions.
+
+## v0.10.1
+
+- Show errors from the Millet CLI much more prettily.
+- Tweak a common error message to stop talking about the "root".
+- Add `millet.server.fileSystemWatcher.enable` VS Code config, defaulting to true.
+- Document how to send LSP init options for non-VS-Code editors.
+
+## v0.10.0
+
+- Show implicated names in fixity errors.
+- Add configuration for permitting fixity declarations to take effect across files, defaulting to false.
+
+## v0.9.8
+
+- Add a newline at the end of the "fill case" text.
+- Preserve the order of datatype constructors in the "fill case" text.
+- Improve some error messages and documentation.
+
+## v0.9.7
+
+- Reduce redundant file I/O when updating input in some cases.
+- Allow disallowing structure paths.
+
 ## v0.9.6
 
 - Improve internals for responding to file changes.

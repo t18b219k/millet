@@ -1,4 +1,8 @@
 //! High-level Intermediate Representation.
+//!
+//! An implementation MUST NOT depend on the various "flavors" for semantics, e.g. type check
+//! differently based on the flavor. It MUST only be used for "niceties", e.g. to emit better error
+//! messages.
 
 #![deny(clippy::pedantic, missing_debug_implementations, rust_2018_idioms)]
 // TODO remove once rustfmt support lands
@@ -51,9 +55,6 @@ pub type Seq<T> = Vec<la_arena::Idx<T>>;
 // modules //
 
 /// Whether something used syntax sugar.
-///
-/// An implementation MUST NOT depend on this for semantics, e.g. type check differently based on
-/// the flavor. It MUST only be used for "niceties", e.g. to emit better error messages.
 #[derive(Debug, Clone, Copy)]
 pub enum Flavor {
   /// It used sugar.
@@ -151,7 +152,7 @@ pub enum Spec {
   Sharing(SpecSeq, SharingKind, Vec<Path>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum SharingKind {
   /// The non-derived form, `sharing type`.
   Regular,
@@ -204,7 +205,7 @@ pub enum Exp {
   Handle(ExpIdx, Vec<Arm>),
   Raise(ExpIdx),
   Fn(Vec<Arm>, FnFlavor),
-  Typed(ExpIdx, TyIdx),
+  Typed(ExpIdx, TyIdx, TypedFlavor),
 }
 
 #[derive(Debug, Clone)]
@@ -214,9 +215,6 @@ pub struct Arm {
 }
 
 /// The original bit of syntax that got eventually lowered to stuff involving `fn`.
-///
-/// An implementation MUST NOT depend on this for semantics, e.g. type check differently based on
-/// the flavor. It MUST only be used for "niceties", e.g. to emit better error messages.
 #[derive(Debug, Clone, Copy)]
 pub enum FnFlavor {
   /// i.e. `andalso`/`orelse`. Lowers to `if`.
@@ -225,8 +223,10 @@ pub enum FnFlavor {
   If,
   /// Lowers to `fn` applied to the head.
   Case,
-  /// Lowers to `val rec` with a bunch of `fn`, then a `case` on a tuple.
-  Fun,
+  /// The `fn` that take in the `fun` arguments.
+  FunArg,
+  /// The `fn` that is lowered from the `case` on all of the `fun` arguments.
+  FunCase { tuple: bool },
   /// Lowers to `fn` with a record pattern with a `...` pattern row.
   Selector,
   /// Lowers to `fun` and `if`.
@@ -237,13 +237,20 @@ pub enum FnFlavor {
   Fn,
 }
 
+/// The original bit of syntax that got eventually lowered to stuff involving `exp : ty`.
+#[derive(Debug, Clone, Copy)]
+pub enum TypedFlavor {
+  Fun,
+  Regular,
+}
+
 pub type DecSeq = Seq<Dec>;
 pub type DecIdx = la_arena::Idx<Dec>;
 pub type DecArena = Arena<Dec>;
 
 #[derive(Debug)]
 pub enum Dec {
-  Val(Vec<TyVar>, Vec<ValBind>),
+  Val(Vec<TyVar>, Vec<ValBind>, ValFlavor),
   Ty(Vec<TyBind>),
   /// The TyBinds are from `withtype`, since it's easier to process in statics than lower.
   Datatype(Vec<DatBind>, Vec<TyBind>),
@@ -260,6 +267,22 @@ pub struct ValBind {
   pub rec: bool,
   pub pat: PatIdx,
   pub exp: ExpIdx,
+}
+
+/// The original bit of syntax that got eventually lowered to stuff involving `val`.
+#[derive(Debug, Clone, Copy)]
+pub enum ValFlavor {
+  /// A top-level expression `e` lowers to `val _ = e` (it should technically lower to `val it = e`
+  /// but see the comment.)
+  TopLevelExp,
+  /// `do e` lowers to `val () = e`.
+  Do,
+  /// Lowers to `fun`.
+  While,
+  /// Lowers to `val rec` + a `case`.
+  Fun,
+  /// Lowers to itself.
+  Val,
 }
 
 #[derive(Debug)]

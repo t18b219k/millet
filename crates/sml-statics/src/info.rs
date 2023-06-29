@@ -1,22 +1,19 @@
 //! See [`Info`].
 
-use crate::{basis::Bs, env::Env};
+use crate::basis::Bs;
 use fast_hash::FxHashSet;
 use sml_hir::la_arena;
-use sml_statics_types::info::{IdStatus, ValInfo};
-use sml_statics_types::ty::{Ty, TyData, TyScheme, Tys};
+use sml_statics_types::ty::{Ty, TyData, TyScheme};
 use sml_statics_types::util::ty_syms;
-use sml_statics_types::{def, display::MetaVarNames, mode::Mode};
+use sml_statics_types::{def, display::MetaVarNames, env::Env, mode::Mode};
 use std::fmt;
 
 pub(crate) type IdxMap<K, V> = la_arena::ArenaMap<la_arena::Idx<K>, V>;
 
 #[derive(Debug, Default, Clone)]
 pub(crate) struct Defs {
-  pub(crate) str_dec: IdxMap<sml_hir::StrDec, def::Def>,
   pub(crate) str_exp: IdxMap<sml_hir::StrExp, def::Def>,
   pub(crate) sig_exp: IdxMap<sml_hir::SigExp, def::Def>,
-  pub(crate) spec: IdxMap<sml_hir::Spec, def::Def>,
   pub(crate) dec: IdxMap<sml_hir::Dec, def::Def>,
   pub(crate) exp: IdxMap<sml_hir::Exp, FxHashSet<def::Def>>,
   pub(crate) pat: IdxMap<sml_hir::Pat, FxHashSet<def::Def>>,
@@ -26,10 +23,9 @@ pub(crate) struct Defs {
 impl Defs {
   fn get(&self, idx: sml_hir::Idx) -> FxHashSet<def::Def> {
     match idx {
-      sml_hir::Idx::StrDec(idx) => self.str_dec.get(idx).into_iter().copied().collect(),
+      sml_hir::Idx::StrDec(_) | sml_hir::Idx::Spec(_) => FxHashSet::default(),
       sml_hir::Idx::StrExp(idx) => self.str_exp.get(idx).into_iter().copied().collect(),
       sml_hir::Idx::SigExp(idx) => self.sig_exp.get(idx).into_iter().copied().collect(),
-      sml_hir::Idx::Spec(idx) => self.spec.get(idx).into_iter().copied().collect(),
       sml_hir::Idx::Dec(idx) => self.dec.get(idx).into_iter().copied().collect(),
       sml_hir::Idx::Exp(idx) => self.exp.get(idx).into_iter().flatten().copied().collect(),
       sml_hir::Idx::Pat(idx) => self.pat.get(idx).into_iter().flatten().copied().collect(),
@@ -39,14 +35,12 @@ impl Defs {
 
   fn with_def(&self, def: def::Def) -> impl Iterator<Item = sml_hir::Idx> + '_ {
     std::iter::empty::<(sml_hir::Idx, def::Def)>()
-      .chain(self.str_dec.iter().map(|(idx, &d)| (idx.into(), d)))
       .chain(self.str_exp.iter().map(|(idx, &d)| (idx.into(), d)))
       .chain(self.sig_exp.iter().map(|(idx, &d)| (idx.into(), d)))
-      .chain(self.spec.iter().map(|(idx, &d)| (idx.into(), d)))
       .chain(self.dec.iter().map(|(idx, &d)| (idx.into(), d)))
-      .chain(self.ty.iter().map(|(idx, &d)| (idx.into(), d)))
       .chain(self.exp.iter().flat_map(|(idx, ds)| ds.iter().map(move |&d| (idx.into(), d))))
       .chain(self.pat.iter().flat_map(|(idx, ds)| ds.iter().map(move |&d| (idx.into(), d))))
+      .chain(self.ty.iter().map(|(idx, &d)| (idx.into(), d)))
       .filter_map(move |(idx, d)| (d == def).then_some(idx))
   }
 }
@@ -141,9 +135,14 @@ impl Info {
 
   /// Returns a Markdown string with type information associated with this index.
   #[must_use]
-  pub fn get_ty_md(&self, st: &sml_statics_types::St, idx: sml_hir::Idx) -> Option<String> {
+  pub fn get_ty_md(
+    &self,
+    st: &sml_statics_types::St,
+    idx: sml_hir::Idx,
+    lines: config::DiagnosticLines,
+  ) -> Option<String> {
     let ty_entry = self.entries.tys.get(idx)?;
-    let ty_entry = TyEntryDisplay { ty_entry, st };
+    let ty_entry = TyEntryDisplay { ty_entry, st, lines };
     Some(ty_entry.to_string())
   }
 
@@ -190,7 +189,7 @@ impl Info {
       TyData::Con(data) => data.sym,
       _ => return None,
     };
-    let mut ret: Vec<_> = st
+    let ret: Vec<_> = st
       .syms
       .get(sym)?
       .ty_info
@@ -201,7 +200,6 @@ impl Info {
         (name.clone(), has_arg)
       })
       .collect();
-    ret.sort_unstable();
     Some(ret)
   }
 
@@ -251,46 +249,32 @@ impl Info {
     self.entries.defs.with_def(def)
   }
 
-  /// Returns the completions for this file.
+  /// Returns a string representation of a type annotation for the pattern.
   #[must_use]
-  pub fn completions(&self, st: &sml_statics_types::St) -> Vec<CompletionItem> {
-    let mut ret = Vec::<CompletionItem>::new();
+  pub fn show_pat_ty_annot(
+    &self,
+    st: &sml_statics_types::St,
+    pat: sml_hir::la_arena::Idx<sml_hir::Pat>,
+  ) -> Option<String> {
+    let ty_entry = self.entries.tys.pat.get(pat)?;
     let mut mvs = MetaVarNames::new(&st.tys);
-    ret.extend(self.bs.env.val_env.iter().map(|(name, val_info)| {
-      mvs.clear();
-      mvs.extend_for(val_info.ty_scheme.ty);
-      CompletionItem {
-        label: name.as_str().to_owned(),
-        kind: val_info_symbol_kind(&st.tys, val_info),
-        detail: Some(val_info.ty_scheme.display(&mvs, &st.syms).to_string()),
-        // TODO improve? might need to reorganize where documentation is stored
-        documentation: None,
-      }
-    }));
-    ret
+    mvs.extend_for(ty_entry.ty);
+    let ty = ty_entry.ty.display(&mvs, &st.syms, config::DiagnosticLines::One);
+    Some(format!(" : {ty}"))
   }
 
-  /// Returns some type annotation bits.
-  pub fn show_ty_annot<'a>(
-    &'a self,
-    st: &'a sml_statics_types::St,
-  ) -> impl Iterator<Item = (sml_hir::la_arena::Idx<sml_hir::Pat>, String)> + 'a {
-    self.entries.tys.pat.iter().filter_map(|(pat, ty_entry)| {
-      let self_def = self.entries.defs.pat.get(pat)?.iter().any(|&d| match d {
-        def::Def::Path(_, ref_idx) => match ref_idx {
-          sml_hir::Idx::Pat(ref_pat) => pat == ref_pat,
-          _ => false,
-        },
-        def::Def::Primitive(_) => false,
-      });
-      if !self_def {
-        return None;
-      }
-      let mut mvs = MetaVarNames::new(&st.tys);
-      mvs.extend_for(ty_entry.ty);
-      let ty = ty_entry.ty.display(&mvs, &st.syms);
-      Some((pat, format!(" : {ty})")))
-    })
+  /// Returns a string representation of a type annotation for the expression.
+  #[must_use]
+  pub fn show_ty_annot(
+    &self,
+    st: &sml_statics_types::St,
+    exp: sml_hir::la_arena::Idx<sml_hir::Exp>,
+  ) -> Option<String> {
+    let ty_entry = self.entries.tys.exp.get(exp)?;
+    let mut mvs = MetaVarNames::new(&st.tys);
+    mvs.extend_for(ty_entry.ty);
+    let ty = ty_entry.ty.display(&mvs, &st.syms, config::DiagnosticLines::One);
+    Some(format!(" : {ty}"))
   }
 }
 
@@ -310,6 +294,7 @@ impl TyEntry {
 struct TyEntryDisplay<'a> {
   ty_entry: &'a TyEntry,
   st: &'a sml_statics_types::St,
+  lines: config::DiagnosticLines,
 }
 
 impl fmt::Display for TyEntryDisplay<'_> {
@@ -319,12 +304,12 @@ impl fmt::Display for TyEntryDisplay<'_> {
     writeln!(f, "```sml")?;
     if let Some(ty_scheme) = &self.ty_entry.ty_scheme {
       mvs.extend_for(ty_scheme.ty);
-      let ty_scheme = ty_scheme.display(&mvs, &self.st.syms);
+      let ty_scheme = ty_scheme.display(&mvs, &self.st.syms, self.lines);
       writeln!(f, "(* most general *)")?;
       writeln!(f, "{ty_scheme}")?;
       writeln!(f, "(* this usage *)")?;
     }
-    let ty = self.ty_entry.ty.display(&mvs, &self.st.syms);
+    let ty = self.ty_entry.ty.display(&mvs, &self.st.syms, self.lines);
     writeln!(f, "{ty}")?;
     writeln!(f, "```")?;
     Ok(())
@@ -355,10 +340,11 @@ fn env_syms(
     mvs.clear();
     mvs.extend_for(ty_info.ty_scheme.ty);
     let idx = def_idx(path, ty_info.def?)?;
+    let ty_scheme = ty_info.ty_scheme.display(mvs, &st.syms, config::DiagnosticLines::Many);
     Some(DocumentSymbol {
       name: name.as_str().to_owned(),
       kind: sml_namespace::SymbolKind::Type,
-      detail: Some(ty_info.ty_scheme.display(mvs, &st.syms).to_string()),
+      detail: Some(ty_scheme.to_string()),
       idx,
       children: Vec::new(),
     })
@@ -366,12 +352,13 @@ fn env_syms(
   ac.extend(env.val_env.iter().flat_map(|(name, val_info)| {
     mvs.clear();
     mvs.extend_for(val_info.ty_scheme.ty);
-    let detail = val_info.ty_scheme.display(mvs, &st.syms).to_string();
+    let detail =
+      val_info.ty_scheme.display(mvs, &st.syms, config::DiagnosticLines::Many).to_string();
     val_info.defs.iter().filter_map(move |&def| {
       let idx = def_idx(path, def)?;
       Some(DocumentSymbol {
         name: name.as_str().to_owned(),
-        kind: val_info_symbol_kind(&st.tys, val_info),
+        kind: sml_symbol_kind::get(&st.tys, val_info),
         detail: Some(detail.clone()),
         idx,
         children: Vec::new(),
@@ -390,17 +377,6 @@ fn def_idx(path: paths::PathId, def: def::Def) -> Option<sml_hir::Idx> {
   }
 }
 
-fn val_info_symbol_kind(tys: &Tys, val_info: &ValInfo) -> sml_namespace::SymbolKind {
-  match val_info.id_status {
-    IdStatus::Con => sml_namespace::SymbolKind::Constructor,
-    IdStatus::Exn(_) => sml_namespace::SymbolKind::Exception,
-    IdStatus::Val => match tys.data(val_info.ty_scheme.ty) {
-      TyData::Fn(_) => sml_namespace::SymbolKind::Function,
-      _ => sml_namespace::SymbolKind::Value,
-    },
-  }
-}
-
 /// A document symbol.
 #[derive(Debug)]
 pub struct DocumentSymbol {
@@ -414,17 +390,4 @@ pub struct DocumentSymbol {
   pub idx: sml_hir::Idx,
   /// Children of this symbol.
   pub children: Vec<DocumentSymbol>,
-}
-
-/// A completion item.
-#[derive(Debug)]
-pub struct CompletionItem {
-  /// The label.
-  pub label: String,
-  /// The kind.
-  pub kind: sml_namespace::SymbolKind,
-  /// Detail about it.
-  pub detail: Option<String>,
-  /// Markdown documentation for it.
-  pub documentation: Option<String>,
 }

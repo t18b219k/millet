@@ -1,12 +1,12 @@
 //! Signature instantiation.
 
-use crate::env::{Env, Sig};
 use crate::error::ErrorKind;
 use crate::{compatible::eq_ty_fn_no_emit, get_env::get_ty_info_raw, st::St, top_dec::realize};
+use sml_statics_types::env::{Env, Sig};
 use sml_statics_types::{ty::TyScheme, util::n_ary_con};
 
 pub(crate) fn env_of_sig(
-  st: &mut St,
+  st: &mut St<'_>,
   idx: sml_hir::Idx,
   subst: &mut realize::TyRealization,
   env: &Env,
@@ -17,8 +17,8 @@ pub(crate) fn env_of_sig(
     let bound_vars = st.syms_tys.syms.get(sym).unwrap().ty_info.ty_scheme.bound_vars.clone();
     let ty_scheme = n_ary_con(&mut st.syms_tys.tys, bound_vars, sym);
     if !bound_ty_name_to_path(st, &mut path, &sig.env, &ty_scheme) {
-      // @test(sig::no_path_to_sym). there should have already been an error emitted for this
-      log::warn!("no path to sym");
+      // there should have already been an error emitted for this
+      cov_mark::hit("no_path_to_sym");
       return;
     }
     let last = path.pop().unwrap();
@@ -57,7 +57,7 @@ pub(crate) fn env_of_sig(
 /// this seems slightly questionable, but I'm not actually sure if it's an issue. I mean, it says
 /// right there that they should be equal anyway.
 fn bound_ty_name_to_path<'e>(
-  st: &mut St,
+  st: &mut St<'_>,
   ac: &mut Vec<&'e str_util::Name>,
   env: &'e Env,
   ty_scheme: &TyScheme,

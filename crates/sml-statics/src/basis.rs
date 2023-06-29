@@ -1,20 +1,23 @@
 //! Bases. (The plural of "basis".)
 
-use crate::env::{Cx, Env, FunEnv, SigEnv, StrEnv};
 use crate::get_env::get_mut_env;
 use fast_hash::FxHashMap;
 use sml_statics_types::disallow::{self, Disallow};
+use sml_statics_types::env::{Cx, Env, FunEnv, SigEnv, StrEnv};
 use sml_statics_types::info::{IdStatus, TyEnv, TyInfo, ValEnv, ValInfo};
-use sml_statics_types::sym::{Equality, Sym, Syms};
-use sml_statics_types::ty::{BoundTyVar, RecordData, Ty, TyScheme, TyVarKind, Tys};
+use sml_statics_types::sym::{Equality, Sym, SymTyInfo, SymValEnv, Syms};
+use sml_statics_types::ty::{BoundTyVar, BoundTyVarData, RecordData, Ty, TyScheme, TyVarKind, Tys};
 use sml_statics_types::{def::Primitive, item::Item, overload};
 
 /// A basis.
 #[derive(Debug, Default, Clone)]
 pub struct Bs {
-  pub(crate) env: Env,
-  pub(crate) sig_env: SigEnv,
-  pub(crate) fun_env: FunEnv,
+  /// The env.
+  pub env: Env,
+  /// The sig env.
+  pub sig_env: SigEnv,
+  /// The functor env.
+  pub fun_env: FunEnv,
 }
 
 impl Bs {
@@ -92,6 +95,29 @@ impl Bs {
       Some(x) => Err(disallow::Error::Already(x.clone())),
     }
   }
+
+  /// Disallow a structure, transitively including all of its items.
+  ///
+  /// # Errors
+  ///
+  /// If the path couldn't be disallowed.
+  pub fn disallow_str(&mut self, val: &sml_path::Path) -> Result<(), disallow::Error> {
+    let env = match get_mut_env(&mut self.env, val.prefix()) {
+      Ok(x) => x,
+      Err(n) => return Err(disallow::Error::Undefined(Item::Struct, n.clone())),
+    };
+    let env = match env.str_env.get_mut(val.last()) {
+      Some(x) => x,
+      None => return Err(disallow::Error::Undefined(Item::Struct, val.last().clone())),
+    };
+    match &env.disallow {
+      None => {
+        env.disallow = Some(Disallow::Directly);
+        Ok(())
+      }
+      Some(x) => Err(disallow::Error::Already(x.clone())),
+    }
+  }
 }
 
 /// Returns the minimal basis and symbols.
@@ -153,7 +179,7 @@ pub fn minimal() -> (sml_statics_types::St, Bs) {
     .iter_syms()
     .map(|sym_info| {
       assert!(sym_info.path.prefix().is_empty(), "only built-in types are currently in this Syms");
-      (sym_info.path.last().clone(), sym_info.ty_info.clone())
+      (sym_info.path.last().clone(), sym_info.ty_info.clone().with_default_val_env())
     })
     .chain(aliases.into_iter().map(|(name, ty)| {
       let ti = TyInfo {
@@ -218,7 +244,7 @@ pub fn minimal() -> (sml_statics_types::St, Bs) {
   (sml_statics_types::St { syms, tys }, bs)
 }
 
-fn insert_special(syms: &mut Syms, sym: Sym, ty_info: TyInfo) {
+fn insert_special(syms: &mut Syms, sym: Sym, ty_info: SymTyInfo) {
   assert_ne!(sym, Sym::EXN);
   let equality = if sym == Sym::REF {
     Equality::Always
@@ -233,13 +259,13 @@ fn insert_special(syms: &mut Syms, sym: Sym, ty_info: TyInfo) {
   syms.finish(started, ty_info, equality);
 }
 
-fn basic_datatype(tys: &mut Tys, sym: Sym, ctors: &'static [Primitive]) -> TyInfo {
+fn basic_datatype(tys: &mut Tys, sym: Sym, ctors: &'static [Primitive]) -> SymTyInfo {
   let ty_scheme = TyScheme::zero(tys.con(Vec::new(), sym));
   let val_env = datatype_ve(ctors.iter().map(|&x| (x, ty_scheme.clone())));
   TyInfo { ty_scheme, val_env, def: Some(sym.primitive().unwrap().into()), disallow: None }
 }
 
-fn datatype_ve<I>(xs: I) -> ValEnv
+fn datatype_ve<I>(xs: I) -> SymValEnv
 where
   I: IntoIterator<Item = (Primitive, TyScheme)>,
 {
@@ -274,15 +300,15 @@ where
   })
 }
 
-fn ty_scheme_one<F>(tys: &mut Tys, k: TyVarKind, f: F) -> TyScheme
+fn ty_scheme_one<F>(tys: &mut Tys, kind: TyVarKind, f: F) -> TyScheme
 where
   F: FnOnce(&mut Tys, Ty) -> Ty,
 {
-  let mut bound_vars = Vec::<TyVarKind>::new();
+  let mut bound_vars = Vec::<BoundTyVarData>::new();
   let mut ty = None::<Ty>;
   BoundTyVar::add_to_binder(&mut bound_vars, |bv| {
     ty = Some(Ty::bound_var(bv));
-    k
+    BoundTyVarData::Kind(kind)
   });
   TyScheme { bound_vars, ty: f(tys, ty.unwrap()) }
 }

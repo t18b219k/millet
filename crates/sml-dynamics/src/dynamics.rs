@@ -12,14 +12,14 @@ pub struct Dynamics<'a> {
 }
 
 impl<'a> Dynamics<'a> {
-  /// Returns a new dynamics for these decs, or `None` if `decs` is empty.
+  /// Returns a new dynamics for these str decs, or `None` if `str_decs` is empty.
   #[must_use]
-  pub fn new(cx: Cx<'a>, mut decs: Vec<sml_hir::DecIdx>) -> Option<Self> {
-    let mut st = St::default();
-    decs.reverse();
-    let dec = decs.pop()?;
-    st.push_with_cur_env(FrameKind::Local(decs, Vec::new()));
-    Some(Self { cx, st, step: Some(Step::Dec(dec)) })
+  pub fn new(cx: Cx<'a>, mut str_decs: Vec<sml_hir::StrDecIdx>) -> Option<Self> {
+    let mut st = St::new_with_std_basis();
+    str_decs.reverse();
+    let str_dec = str_decs.pop()?;
+    st.push_with_cur_env(FrameKind::StrDecSeq(str_decs));
+    Some(Self { cx, st, step: Some(Step::StrDec(str_dec)) })
   }
 
   /// Takes a step. Panics if this was already finished.
@@ -31,7 +31,9 @@ impl<'a> Dynamics<'a> {
       s = new_s;
       if self.st.frames.is_empty() {
         return match s {
-          Step::Val(_) | Step::Exp(_) | Step::Dec(_) => unreachable!("not done, but no frames"),
+          Step::Val(_) | Step::Exp(_) | Step::Dec(_) | Step::StrDec(_) => {
+            unreachable!("not done, but no frames")
+          }
           Step::Raise(_) => Progress::Raise,
           Step::DecDone => Progress::Done,
         };
@@ -42,6 +44,14 @@ impl<'a> Dynamics<'a> {
     }
     self.step = Some(s);
     Progress::Still(self)
+  }
+
+  /// Prints debug output. TODO remove
+  pub fn show_debug(&self) {
+    for frame in &self.st.frames {
+      println!("frame: {:?}", frame.kind);
+    }
+    println!("step: {:?}", self.step);
   }
 }
 

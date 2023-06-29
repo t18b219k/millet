@@ -4,6 +4,7 @@ use crate::types::Severities;
 use crate::util::{
   get_path_id, read_dir, str_path, Error, ErrorKind, ErrorSource, GroupPathKind, NoRootFlavor,
 };
+use fast_hash::{FxHashMap, FxHashSet};
 use paths::PathId;
 use slash_var_path::{EnvEntry, EnvEntryKind};
 use std::path::{Path, PathBuf};
@@ -115,8 +116,14 @@ impl Config {
     let parsed: config::file::Root = match toml::from_str(contents) {
       Ok(x) => x,
       Err(e) => {
+        let range = e.span().and_then(|span| {
+          let db = text_pos::PositionDb::new(contents);
+          let text_range =
+            text_size_util::TextRange::new(span.start.try_into().ok()?, span.end.try_into().ok()?);
+          db.range_utf16(text_range)
+        });
         errors.push(Error::new(
-          ErrorSource::default(),
+          ErrorSource { path: None, range },
           config_path.to_owned(),
           ErrorKind::CouldNotParseConfig(e),
         ));
@@ -151,7 +158,6 @@ impl Config {
       };
       ret.path_vars.insert(key, EnvEntry { kind, suffix });
     }
-
     for (code, config) in parsed.diagnostics {
       let code = match code.parse::<diagnostic::Code>() {
         Ok(x) => x,
@@ -171,27 +177,38 @@ impl Config {
       };
       ret.severities.insert(code, sev);
     }
+    ret.lang.fixity_across_files = parsed.language.fixity_across_files;
     ret.lang.dec = parsed.language.dec;
     ret.lang.exp = parsed.language.exp;
-    for (path, allowed) in parsed.language.val {
-      let parts: Option<Vec<_>> = path.split('.').map(str_util::Name::try_new).collect();
-      let parts = match parts {
-        Some(x) => x,
-        None => {
-          errors.push(Error::new(
-            ErrorSource::default(),
-            config_path.to_owned(),
-            ErrorKind::EmptyStrInPath(path),
-          ));
-          continue;
-        }
-      };
-      if !allowed {
-        let p = sml_path::Path::try_new(parts).expect("split always returns non-empty iter");
-        ret.lang.val.insert(p);
-      }
-    }
+    disallow(errors, config_path, parsed.language.val, &mut ret.lang.val);
+    disallow(errors, config_path, parsed.language.structure, &mut ret.lang.structure);
     (ret, parsed.workspace.root)
+  }
+}
+
+fn disallow(
+  errors: &mut Vec<Error>,
+  config_path: &Path,
+  map: FxHashMap<str_util::SmolStr, bool>,
+  set: &mut FxHashSet<sml_path::Path>,
+) {
+  for (path, allowed) in map {
+    let parts: Option<Vec<_>> = path.split('.').map(str_util::Name::try_new).collect();
+    let parts = match parts {
+      Some(x) => x,
+      None => {
+        errors.push(Error::new(
+          ErrorSource::default(),
+          config_path.to_owned(),
+          ErrorKind::EmptyStrInPath(path),
+        ));
+        continue;
+      }
+    };
+    if !allowed {
+      let p = sml_path::Path::try_new(parts).expect("split always returns non-empty iter");
+      set.insert(p);
+    }
   }
 }
 

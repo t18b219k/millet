@@ -48,7 +48,7 @@ fn fun_dec_wrong_num_pats() {
     r#"
 fun f 1 = 2
   | f 3 4 = 5
-(** ^^^^^^^^^ expected 1 pattern, found 2 *)
+(**   ^^^ expected 1 pattern, found 2 *)
 "#,
   );
 }
@@ -341,6 +341,7 @@ val _ = 3and _ = 4
 (**     ^^^^ invalid literal: invalid digit found in string *)
 "#,
   );
+  cov_mark::hit("num_suffix");
 }
 
 #[test]

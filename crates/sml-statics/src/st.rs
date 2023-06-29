@@ -9,9 +9,9 @@ use sml_statics_types::{def, item::Item, mode::Mode};
 
 /// The mutable state.
 #[derive(Debug)]
-pub(crate) struct St {
+pub(crate) struct St<'a> {
   pub(crate) info: Info,
-  pub(crate) syms_tys: sml_statics_types::St,
+  pub(crate) syms_tys: &'a mut sml_statics_types::St,
   errors: Vec<Error>,
   matches: Vec<Match>,
   /// a subset of all things that have definition sites. currently, only local value variables to a
@@ -24,8 +24,8 @@ pub(crate) struct St {
   pub(crate) pat_id_statuses: sml_statics_types::info::IdStatusMap<sml_hir::Pat>,
 }
 
-impl St {
-  pub(crate) fn new(mode: Mode, syms_tys: sml_statics_types::St) -> Self {
+impl<'a> St<'a> {
+  pub(crate) fn new(mode: Mode, syms_tys: &'a mut sml_statics_types::St) -> St<'a> {
     Self {
       info: Info::new(mode),
       syms_tys,
@@ -107,8 +107,25 @@ impl St {
     self.cur_prefix.pop().expect("no matching push_structure");
   }
 
+  // returns whether given the current mode and prefix, a type should be reported unqualified.
+  fn is_well_known_prefix(&self) -> bool {
+    match self.info.mode {
+      Mode::BuiltinLib(_) => {}
+      Mode::Regular(_) | Mode::PathOrder | Mode::Dynamics => return false,
+    }
+    let prefix = match &self.cur_prefix[..] {
+      [x] => x,
+      _ => return false,
+    };
+    matches!(prefix.as_str(), "Option" | "Array" | "Vector")
+  }
+
   pub(crate) fn mk_path(&self, last: str_util::Name) -> sml_path::Path {
-    sml_path::Path::new(self.cur_prefix.iter().cloned(), last)
+    if self.is_well_known_prefix() {
+      sml_path::Path::one(last)
+    } else {
+      sml_path::Path::new(self.cur_prefix.iter().cloned(), last)
+    }
   }
 
   pub(crate) fn finish(&mut self) -> Vec<Error> {
@@ -116,19 +133,19 @@ impl St {
       for m in std::mem::take(&mut self.matches) {
         match m.kind {
           MatchKind::Bind(pat) => {
-            let missing = get_match(&mut self.errors, &mut self.syms_tys, vec![pat], m.want);
+            let missing = get_match(&mut self.errors, self.syms_tys, vec![pat], m.want);
             if !missing.is_empty() {
               self.err(m.idx, ErrorKind::NonExhaustiveBinding(missing));
             }
           }
           MatchKind::Case(pats) => {
-            let missing = get_match(&mut self.errors, &mut self.syms_tys, pats, m.want);
+            let missing = get_match(&mut self.errors, self.syms_tys, pats, m.want);
             if !missing.is_empty() {
               self.err(m.idx, ErrorKind::NonExhaustiveCase(missing));
             }
           }
           MatchKind::Handle(pats) => {
-            get_match(&mut self.errors, &mut self.syms_tys, pats, m.want);
+            get_match(&mut self.errors, self.syms_tys, pats, m.want);
           }
         }
       }

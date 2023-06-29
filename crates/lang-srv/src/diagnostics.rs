@@ -9,7 +9,7 @@ use paths::FileSystem as _;
 pub(crate) fn try_publish(st: &mut St) -> bool {
   let root = match &mut st.mode {
     Mode::Root(x) => x,
-    Mode::NoRoot(_) => return false,
+    Mode::NoRoot => return false,
   };
   let mut input_diagnostics = FxHashMap::<Url, Vec<lsp_types::Diagnostic>>::default();
   for err in &root.input.errors {
@@ -21,7 +21,7 @@ pub(crate) fn try_publish(st: &mut St) -> bool {
             err.range(),
             err.code(),
             err.severity(),
-            st.cx.options.diagnostics.more_info_hint,
+            st.cx.options.diagnostics.more_info_hint.0,
           );
           input_diagnostics.entry(url).or_default().push(d);
           true
@@ -60,7 +60,7 @@ pub(crate) fn try_publish(st: &mut St) -> bool {
         continue;
       }
     };
-    let ds = convert::diagnostics(errors, st.cx.options.diagnostics.more_info_hint);
+    let ds = convert::diagnostics(errors, st.cx.options.diagnostics.more_info_hint.0);
     if ds.is_empty() {
       continue;
     }

@@ -420,10 +420,12 @@ fn get_str_exp(st: &mut St, cfg: Cfg, str_exp: ast::StrExp) -> Res {
     ast::StrExp::AppStrExp(exp) => {
       st.write(exp.name()?.text());
       st.write(" (");
+      let mut needs_end_indent = false;
       for arg in exp.app_str_exp_args() {
         match arg {
           ast::AppStrExpArg::AppStrExpArgStrExp(arg) => get_str_exp(st, cfg, arg.str_exp()?)?,
           ast::AppStrExpArg::Dec(arg) => {
+            needs_end_indent = true;
             st.write("\n");
             let new_cfg = cfg.indented();
             new_cfg.output_indent(st);
@@ -431,6 +433,9 @@ fn get_str_exp(st: &mut St, cfg: Cfg, str_exp: ast::StrExp) -> Res {
             st.write("\n");
           }
         }
+      }
+      if needs_end_indent {
+        cfg.output_indent(st);
       }
       st.write(")");
     }
@@ -536,11 +541,17 @@ fn body_exp_needs_newline(exp: &ast::Exp) -> bool {
 }
 
 fn get_body_exp(st: &mut St, cfg: Cfg, exp: ast::Exp) -> Res {
+  get_body_exp_level(st, cfg, 1, exp)
+}
+
+fn get_body_exp_level(st: &mut St, mut cfg: Cfg, level: usize, exp: ast::Exp) -> Res {
   if body_exp_needs_newline(&exp) {
     st.write("\n");
-    let new_cfg = cfg.indented();
-    new_cfg.output_indent(st);
-    get_exp(st, new_cfg, exp)
+    for _ in 0..level {
+      cfg = cfg.indented();
+    }
+    cfg.output_indent(st);
+    get_exp(st, cfg, exp)
   } else {
     st.write(" ");
     get_exp(st, cfg, exp)
@@ -561,7 +572,7 @@ fn get_exp(st: &mut St, cfg: Cfg, exp: ast::Exp) -> Res {
       path(st, exp.path()?)?;
     }
     ast::Exp::RecordExp(exp) => {
-      st.write("{");
+      st.write("{ ");
       sep(st, ", ", exp.exp_rows(), |st, row| {
         st.write(row.lab()?.token.text());
         if let Some(eq_exp) = row.eq_exp() {
@@ -570,7 +581,7 @@ fn get_exp(st: &mut St, cfg: Cfg, exp: ast::Exp) -> Res {
         }
         Some(())
       })?;
-      st.write("}");
+      st.write(" }");
     }
     ast::Exp::SelectorExp(exp) => {
       st.write("#");
@@ -723,7 +734,7 @@ fn get_matcher_across_lines(st: &mut St, cfg: Cfg, matcher: ast::Matcher) -> Res
 fn get_matcher_arm(st: &mut St, cfg: Cfg, arm: ast::Arm) -> Res {
   get_pat(st, arm.pat()?)?;
   st.write(" =>");
-  get_body_exp(st, cfg, arm.exp()?)
+  get_body_exp_level(st, cfg, 2, arm.exp()?)
 }
 
 fn get_pat(st: &mut St, pat: ast::Pat) -> Res {
@@ -741,7 +752,7 @@ fn get_pat(st: &mut St, pat: ast::Pat) -> Res {
       }
     }
     ast::Pat::RecordPat(pat) => {
-      st.write("{");
+      st.write("{ ");
       sep(st, ", ", pat.pat_rows(), |st, row| {
         match row.pat_row_inner()? {
           ast::PatRowInner::RestPatRow(_) => st.write("..."),
@@ -761,7 +772,7 @@ fn get_pat(st: &mut St, pat: ast::Pat) -> Res {
         }
         Some(())
       })?;
-      st.write("}");
+      st.write(" }");
     }
     ast::Pat::ParenPat(pat) => {
       st.write("(");
@@ -815,13 +826,13 @@ fn get_ty(st: &mut St, ty: ast::Ty) -> Res {
     ast::Ty::WildcardTy(_) => st.write("_"),
     ast::Ty::TyVarTy(ty) => st.write(ty.ty_var()?.text()),
     ast::Ty::RecordTy(ty) => {
-      st.write("{");
+      st.write("{ ");
       sep(st, ", ", ty.ty_rows(), |st, row| {
         st.write(row.lab()?.token.text());
         st.write(" : ");
         get_ty(st, row.ty()?)
       })?;
-      st.write("}");
+      st.write(" }");
     }
     ast::Ty::ConTy(ty) => {
       if let Some(ty_seq) = ty.ty_seq() {

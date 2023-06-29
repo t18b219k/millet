@@ -1,26 +1,34 @@
 //! Displaying some types.
 
-#![allow(clippy::too_many_lines)]
-
 use crate::dynamics::Dynamics;
-use crate::types::{Con, ConKind, Env, Exception, FrameKind, Step, Val};
+use crate::types::{Con, Env, Exception, FrameKind, Step, Val};
 use sml_hir::Lab;
 use std::fmt;
 
 impl fmt::Display for Dynamics<'_> {
+  #[allow(clippy::too_many_lines)]
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     let ars = &self.cx.ars;
-    f.write_str("(* env:\n")?;
-    if let Some(frame) = self.st.frames.last() {
-      EnvDisplay { env: &frame.env, ars, indent: 0 }.fmt(f)?;
+    if f.alternate() {
+      f.write_str("(* env:\n")?;
+      if let Some(frame) = self.st.frames.last() {
+        EnvDisplay { env: &frame.env, ars, indent: 0 }.fmt(f)?;
+      }
+      f.write_str("*)\n")?;
     }
-    f.write_str("*)\n")?;
     let mut indent = 0usize;
-    // TODO set this with the frames?
-    let prec = Prec::Min;
+    let mut prec = Prec::Min;
+    let mut frame_prec = Vec::with_capacity(self.st.frames.len());
     for frame in &self.st.frames {
+      frame_prec.push(prec);
       match &frame.kind {
-        FrameKind::AppFunc(_) | FrameKind::Handle(_) => {}
+        FrameKind::Handle(_) | FrameKind::DecSeq(_) | FrameKind::StrDecSeq(_) => {}
+        FrameKind::AppFunc(_) => {
+          if matches!(prec, Prec::Atomic) {
+            f.write_str("(")?;
+          }
+          prec = Prec::Matcher;
+        }
         FrameKind::Record(is_tuple, vs, lab, _) => {
           if *is_tuple {
             f.write_str("(")?;
@@ -37,17 +45,39 @@ impl fmt::Display for Dynamics<'_> {
             lab.fmt(f)?;
             f.write_str(" = ")?;
           }
+          prec = Prec::Min;
         }
         FrameKind::AppClosureArg(matcher) => {
+          if matches!(prec, Prec::Atomic) {
+            f.write_str("(")?;
+          }
           f.write_str("(")?;
           FnDisplay { matcher, ars, indent }.fmt(f)?;
-          f.write_str(") (")?;
+          f.write_str(") ")?;
+          prec = Prec::Atomic;
         }
-        FrameKind::AppConArg(kind) => {
-          kind.fmt(f)?;
-          f.write_str(" (")?;
+        FrameKind::AppBuiltinArg(builtin) => {
+          if matches!(prec, Prec::Atomic) {
+            f.write_str("(")?;
+          }
+          f.write_str(builtin.as_str())?;
+          f.write_str(" ")?;
+          prec = Prec::Atomic;
         }
-        FrameKind::Raise => f.write_str("raise ")?,
+        FrameKind::AppConArg(name, _) => {
+          if matches!(prec, Prec::Atomic) {
+            f.write_str("(")?;
+          }
+          name.fmt(f)?;
+          f.write_str(" ")?;
+          prec = Prec::Atomic;
+        }
+        FrameKind::Raise => {
+          if matches!(prec, Prec::Atomic) {
+            f.write_str("(")?;
+          }
+          f.write_str("raise ")?;
+        }
         FrameKind::Let(_, _) => {
           f.write_str("let")?;
           indent += 1;
@@ -60,6 +90,7 @@ impl fmt::Display for Dynamics<'_> {
           }
           PatDisplay { pat: *pat, ars, atomic: false }.fmt(f)?;
           f.write_str(" = ")?;
+          prec = Prec::Min;
         }
         FrameKind::Local(_, _) => {
           f.write_str("local")?;
@@ -82,12 +113,23 @@ impl fmt::Display for Dynamics<'_> {
       }
       Step::Dec(dec) => DecDisplay { dec: *dec, ars, indent }.fmt(f)?,
       Step::DecDone => {}
+      Step::StrDec(str_dec) => StrDecDisplay { str_dec: *str_dec, ars, indent }.fmt(f)?,
     }
     for frame in self.st.frames.iter().rev() {
+      let prec = frame_prec.pop().unwrap();
       match &frame.kind {
-        FrameKind::Raise => {}
+        FrameKind::Raise
+        | FrameKind::AppClosureArg(_)
+        | FrameKind::AppBuiltinArg(_)
+        | FrameKind::AppConArg(_, _) => {
+          if matches!(prec, Prec::Atomic) {
+            f.write_str(")")?;
+          }
+        }
         FrameKind::Record(is_tuple, _, _, es) => {
-          f.write_str(", ")?;
+          if !es.is_empty() {
+            f.write_str(", ")?;
+          }
           if *is_tuple {
             let rows = es.iter().map(|&(_, exp)| ExpDisplay { exp, ars, prec: Prec::Min, indent });
             fmt_util::comma_seq(f, rows.into_iter())?;
@@ -98,10 +140,12 @@ impl fmt::Display for Dynamics<'_> {
             f.write_str(" }")?;
           }
         }
-        FrameKind::AppClosureArg(_) | FrameKind::AppConArg(_) => f.write_str(")")?,
         FrameKind::AppFunc(exp) => {
           f.write_str(" ")?;
           ExpDisplay { exp: *exp, ars, prec: Prec::Atomic, indent }.fmt(f)?;
+          if matches!(prec, Prec::Atomic) {
+            f.write_str(")")?;
+          }
         }
         FrameKind::Handle(matcher) => {
           f.write_str(" handle")?;
@@ -151,8 +195,21 @@ impl fmt::Display for Dynamics<'_> {
           write_nl_indent(indent, f)?;
           f.write_str("end")?;
         }
+        FrameKind::DecSeq(decs) => {
+          for &dec in decs.iter().rev() {
+            write_nl_indent(indent, f)?;
+            DecDisplay { dec, ars, indent }.fmt(f)?;
+          }
+        }
+        FrameKind::StrDecSeq(str_decs) => {
+          for &str_dec in str_decs.iter().rev() {
+            write_nl_indent(indent, f)?;
+            StrDecDisplay { str_dec, ars, indent }.fmt(f)?;
+          }
+        }
       }
     }
+    assert!(frame_prec.is_empty());
     Ok(())
   }
 }
@@ -167,9 +224,27 @@ enum Prec {
 }
 
 fn write_nl_indent(indent: usize, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-  f.write_str("\n")?;
-  for _ in 0..indent {
-    f.write_str("  ")?;
+  if f.alternate() {
+    f.write_str("\n")?;
+    for _ in 0..indent {
+      f.write_str("  ")?;
+    }
+  } else {
+    f.write_str(" ")?;
+  }
+  Ok(())
+}
+
+fn nl_indent_sep<I, T>(indent: usize, f: &mut fmt::Formatter<'_>, mut iter: I) -> fmt::Result
+where
+  I: Iterator<Item = T>,
+  T: fmt::Display,
+{
+  let fst = iter.next().ok_or(fmt::Error)?;
+  fst.fmt(f)?;
+  for x in iter {
+    write_nl_indent(indent, f)?;
+    x.fmt(f)?;
   }
   Ok(())
 }
@@ -185,23 +260,40 @@ impl fmt::Display for ValDisplay<'_> {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self.val {
       Val::SCon(scon) => scon.fmt(f),
-      Val::Con(con) => ConDisplay {
-        con,
-        ars: self.ars,
-        atomic: matches!(self.prec, Prec::Atomic),
-        indent: self.indent,
-      }
-      .fmt(f),
-      Val::Record(vs) => {
-        f.write_str("{ ")?;
-        let rows = vs.iter().map(|(lab, val)| ValRowDisplay {
-          lab,
-          val,
+      Val::Con(con) => {
+        let con = ConDisplay {
+          con,
           ars: self.ars,
+          atomic: matches!(self.prec, Prec::Atomic),
           indent: self.indent,
-        });
-        fmt_util::comma_seq(f, rows)?;
-        f.write_str(" }")
+        };
+        con.fmt(f)
+      }
+      Val::Record(rows) => {
+        let is_tuple =
+          rows.len() != 1 && rows.iter().enumerate().all(|(idx, (lab, _))| Lab::tuple(idx) == *lab);
+        if is_tuple {
+          f.write_str("(")?;
+          let rows = rows.iter().map(|(_, val)| ValDisplay {
+            val,
+            ars: self.ars,
+            prec: Prec::Min,
+            indent: self.indent,
+          });
+          fmt_util::comma_seq(f, rows)?;
+          f.write_str(")")?;
+        } else {
+          f.write_str("{ ")?;
+          let rows = rows.iter().map(|(lab, val)| ValRowDisplay {
+            lab,
+            val,
+            ars: self.ars,
+            indent: self.indent,
+          });
+          fmt_util::comma_seq(f, rows)?;
+          f.write_str(" }")?;
+        }
+        Ok(())
       }
       Val::Closure(clos) => {
         let needs_paren = matches!(self.prec, Prec::App | Prec::Matcher | Prec::Atomic);
@@ -214,6 +306,7 @@ impl fmt::Display for ValDisplay<'_> {
         }
         Ok(())
       }
+      Val::Builtin(builtin) => f.write_str(builtin.as_str()),
     }
   }
 }
@@ -402,7 +495,7 @@ impl fmt::Display for ExpDisplay<'_> {
         }
         Ok(())
       }
-      sml_hir::Exp::Typed(exp, _) => {
+      sml_hir::Exp::Typed(exp, _, _) => {
         ExpDisplay { exp: *exp, ars: self.ars, prec: self.prec, indent: self.indent }.fmt(f)
       }
     }
@@ -529,7 +622,7 @@ impl fmt::Display for ConDisplay<'_> {
     if needs_paren {
       f.write_str("(")?;
     }
-    self.con.kind.fmt(f)?;
+    self.con.name.fmt(f)?;
     if let Some(val) = &self.con.arg {
       f.write_str(" ")?;
       ValDisplay { val: val.as_ref(), ars: self.ars, prec: Prec::Atomic, indent: self.indent }
@@ -539,14 +632,6 @@ impl fmt::Display for ConDisplay<'_> {
       f.write_str(")")?;
     }
     Ok(())
-  }
-}
-
-impl fmt::Display for ConKind {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    match self {
-      ConKind::Dat(name) | ConKind::Exn(name, _) => name.fmt(f),
-    }
   }
 }
 
@@ -577,7 +662,7 @@ struct DecDisplay<'a> {
 impl fmt::Display for DecDisplay<'_> {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match &self.ars.dec[self.dec] {
-      sml_hir::Dec::Val(_, val_binds) => {
+      sml_hir::Dec::Val(_, val_binds, _) => {
         let mut iter = val_binds.iter();
         let &val_bind = iter.next().ok_or(fmt::Error)?;
         ValBindDisplay { val_bind, ars: self.ars, first: true, indent: self.indent }.fmt(f)?;
@@ -609,6 +694,27 @@ impl fmt::Display for DecDisplay<'_> {
         f.write_str("end")
       }
       sml_hir::Dec::Open(_) => f.write_str("open ..."),
+    }
+  }
+}
+
+struct StrDecDisplay<'a> {
+  str_dec: sml_hir::StrDecIdx,
+  ars: &'a sml_hir::Arenas,
+  indent: usize,
+}
+
+impl fmt::Display for StrDecDisplay<'_> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match &self.ars.str_dec[self.str_dec] {
+      sml_hir::StrDec::Dec(decs) => {
+        let iter = decs.iter().map(|&dec| DecDisplay { dec, ars: self.ars, indent: self.indent });
+        nl_indent_sep(self.indent, f, iter)
+      }
+      sml_hir::StrDec::Structure(_) => todo!(),
+      sml_hir::StrDec::Signature(_) => todo!(),
+      sml_hir::StrDec::Functor(_) => todo!(),
+      sml_hir::StrDec::Local(_, _) => todo!(),
     }
   }
 }

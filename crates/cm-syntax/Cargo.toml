@@ -10,8 +10,9 @@ test = false
 doctest = false
 
 [dependencies]
-lex-util = { path = "../lex-util" }
-paths = { git = "https://github.com/azdavis/language-util.git" }
-slash-var-path = { path = "../slash-var-path" }
-str-util = { git = "https://github.com/azdavis/language-util.git" }
-text-size-util = { git = "https://github.com/azdavis/language-util.git" }
+paths.workspace = true
+str-util.workspace = true
+text-size-util.workspace = true
+
+lex-util.path = "../lex-util"
+slash-var-path.path = "../slash-var-path"

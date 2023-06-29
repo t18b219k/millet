@@ -1,55 +1,52 @@
 //! Configuration options sent when the language server starts.
+//!
+//! The initialization options are a subset of the VS Code config, but rearranged and renamed
+//! slightly. Consult the implementation of the VS Code extension to see what options are sent.
+//! Additionally, consult the documentation for the VS Code configuration to see what types the
+//! configuration options must be.
 
+#![allow(missing_docs)]
+
+use crate::tool::Tool;
 use serde::Deserialize;
 
-/// Settings for the server.
-//
 /// @sync(init-options)
-#[derive(Debug, Deserialize)]
-#[allow(missing_docs)]
+#[derive(Debug, Default, Deserialize)]
 pub struct Options {
-  pub token_hover: bool,
-  pub format: Option<FormatEngine>,
+  #[serde(default)]
+  pub token_hover: Tool,
+  #[serde(default)]
+  pub fs_watcher: Tool,
+  #[serde(default)]
+  pub format: FormatEngine,
+  #[serde(default)]
   pub diagnostics: DiagnosticsOptions,
 }
 
-impl Default for Options {
-  fn default() -> Self {
-    Self { token_hover: true, format: None, diagnostics: DiagnosticsOptions::default() }
-  }
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(missing_docs)]
+#[derive(Debug, Default, Deserialize)]
 pub struct DiagnosticsOptions {
+  #[serde(default)]
   pub on_change: bool,
-  pub more_info_hint: bool,
-  pub ignore: Option<DiagnosticsIgnore>,
+  #[serde(default)]
+  pub more_info_hint: Tool,
+  #[serde(default)]
+  pub ignore: DiagnosticsIgnore,
 }
 
-impl Default for DiagnosticsOptions {
-  fn default() -> Self {
-    Self { on_change: false, more_info_hint: true, ignore: Some(DiagnosticsIgnore::AfterSyntax) }
-  }
-}
-
-/// What diagnostics to send per file.
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DiagnosticsIgnore {
-  /// If there are syntax diagnostics (lex error, parse error, etc), send only those, and ignore
-  /// e.g. statics diagnostics.
+  None,
+  #[default]
   AfterSyntax,
-  /// All diagnostics are filtered out, i.e. no diagnostics are sent.
   All,
 }
 
-/// How to format open SML files on save.
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum FormatEngine {
-  /// Naive formatting.
+  #[default]
+  None,
   Naive,
-  /// Formatting provided by [`smlfmt`](https://github.com/shwestrick/smlfmt).
   Smlfmt,
 }
