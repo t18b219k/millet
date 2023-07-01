@@ -188,3 +188,14 @@ fun hm a b = (abs (a - b), a + b)
 "#,
   );
 }
+
+#[test]
+fn hover() {
+  check(
+    r#"
+(**       vvv hover: <num> * <num> -> <num> *)
+val add = op+
+(** ^^^ hover: int * int -> int *)
+"#,
+  );
+}

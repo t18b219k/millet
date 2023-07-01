@@ -7,7 +7,7 @@ fn across_var_1() {
   check(
     r#"
 fun 'a f (x: 'a) = let val y = x in y false; y end
-(**                                 ^ expected `bool -> ?a`, found `'a` *)
+(**                                 ^ expected `bool -> _`, found `'a` *)
 "#,
   );
 }
@@ -17,7 +17,7 @@ fn across_var_2() {
   check(
     r#"
 fun id' x = let val y = x in y end
-(**     vvv hover: 'a -> 'a *)
+(**     vvv hover: ?a -> ?a *)
 val f = id'
 "#,
   );
@@ -39,7 +39,7 @@ fn bound_at_fun_2() {
   check(
     r#"
 fun 'a f (id: 'a -> 'a) x = id x + 1
-(**                         ^^^^^^^^ expected `<num> * <num>`, found `'a * int` *)
+(**                         ^^^^^^^^ expected `int * int`, found `'a * int` *)
 "#,
   );
 }
@@ -62,7 +62,7 @@ type 'a heh = 'a list
 datatype 'a bad = Bad of 'a
 val _: int heh = [1]
 val _ = Bad: unit
-(**     ^^^^^^^^^ expected `unit`, found `?a -> ?a bad` *)
+(**     ^^^^^^^^^ expected `unit`, found `_ -> _ bad` *)
 "#,
   );
 }

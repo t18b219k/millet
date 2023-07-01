@@ -45,7 +45,7 @@ fun foo x y = x + (if y then 3 else 4)
 }
 
 #[test]
-fn unsolved_general() {
+fn ty_var_regular() {
   check(
     r#"
 fun id x = x
@@ -55,7 +55,7 @@ fun id x = x
 }
 
 #[test]
-fn unsolved_equality() {
+fn ty_var_equality() {
   check(
     r#"
 fun eq x y = x = y
@@ -65,11 +65,11 @@ fun eq x y = x = y
 }
 
 #[test]
-fn unsolved_overload() {
+fn ty_var_overload() {
   check(
     r#"
 fun add x y = x + y
-(**           ^ hover: <num> *)
+(**           ^ hover: int *)
 "#,
   );
 }
@@ -88,13 +88,7 @@ fun getFoo x = if #foo x then 3 else 4
 
 #[test]
 fn swap() {
-  // to fix this test, we'd need to change how to report types to consider all of the unsolved type
-  // variables in the type that 'contains' the type of the thing we're hovering. but that notion
-  // might be hard to define.
-  //
-  // really, it might be better to not report unsolved types (like ?a or ?b) at all, and try to
-  // solve types down to their fully-known, generalized forms.
-  fail(
+  check(
     r#"
 (**          v hover: ?b *)
 fun swap (a, b) = (b, a)
@@ -185,15 +179,33 @@ val _ = Str.x
 
 #[test]
 fn fixed_not_generalized() {
-  // mixing non-generalized fix ty vars with generalized bound ty vars can be problematic.
-  fail(
+  check(
     r#"
 fun foo (x : 'a) =
   let
     fun bar y = (x, y)
   in
     bar
-(** ^^^ hover: 'b -> 'a * 'b *)
+(** ^^^ hover: ?b -> 'a * ?b *)
+  end
+"#,
+  );
+}
+
+#[test]
+fn nested_generalize() {
+  fail(
+    r#"
+fun foo x =
+(**     ^ hover: ?a *)
+  let
+    fun bar y =
+(**         ^ hover: ?b *)
+(**    v hover: ?a *)
+      (x, y)
+(**       ^ hover: ?b *)
+  in
+    bar
   end
 "#,
   );

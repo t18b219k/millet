@@ -7,7 +7,7 @@ fn return_self() {
   check(
     r#"
     fun f _ = f
-(** ^^^^^^^^^^^ circular type: `?b` occurs in `?a -> ?b` *)
+(** ^^^^^^^^^^^ circular type: `?a` occurs in `_ -> ?a` *)
 "#,
   );
 }
